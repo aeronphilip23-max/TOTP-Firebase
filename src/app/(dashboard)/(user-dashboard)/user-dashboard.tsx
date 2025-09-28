@@ -1,3 +1,4 @@
+//added dashboard 
 import React from 'react'
 
 const UserDashboard = () => {
@@ -5,5 +6,4 @@ const UserDashboard = () => {
     <div>UserDashboard</div>
   )
 }
-//added dashboard
 export default UserDashboard
