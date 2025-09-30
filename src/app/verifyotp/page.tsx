@@ -13,20 +13,19 @@ import { QRCodeSVG } from "qrcode.react";
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDMZH_QbSN4zI1J90iOgRD-_zqc_rkwKkw",
-  authDomain: "vite-todo-app-265fa.firebaseapp.com",
-  projectId: "vite-todo-app-265fa",
-  storageBucket: "vite-todo-app-265fa.firebasestorage.app",
-  messagingSenderId: "505654985942",
-  appId: "1:505654985942:web:0981063630c72a9c5db577",
-  measurementId: "G-1J7ELYG5GQ",
+  apiKey: "AIzaSyCTM5_DoF5CdbVqOCpnd7_ps1e9wSahTMY",
+  authDomain: "logitrack-e1972.firebaseapp.com",
+  projectId: "logitrack-e1972",
+  storageBucket: "logitrack-e1972.firebasestorage.app",
+  messagingSenderId: "29625075825",
+  appId: "1:29625075825:web:0fcbaa6ff2bb1d9fe433d0",
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-const Settings = () => {
+const VerifyOTP = () => {
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState("");
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null);
@@ -40,7 +39,7 @@ const Settings = () => {
         setUser(currentUser);
       } else {
         setUser(null);
-        navigate.push("/login");
+        navigate.push("auth/login");
       }
     });
     return () => unsubscribe();
@@ -66,7 +65,7 @@ const Settings = () => {
 
       const totpUri = secret.generateQrCodeUrl(
         user.email || "",
-        "Vite Todo App BALIW NA AQ"
+        "LogiTrack OTP"
       );
 
       // Generate TOTP secret and store it in state
@@ -100,7 +99,7 @@ const Settings = () => {
 
   return (
     <div style={{ maxWidth: "400px", margin: "0 auto", padding: "20px" }}>
-      <h2>Dashboard</h2>
+      <h2>Verify OTP</h2>
       {user ? (
         <>
           <p>Welcome, {user.email || "User"}!</p>
@@ -134,4 +133,4 @@ const Settings = () => {
   );
 };
 
-export default Settings;
+export default VerifyOTP;

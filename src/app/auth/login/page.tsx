@@ -35,11 +35,11 @@ const Login = () => {
       if (isSignUp) {
         await createUserWithEmailAndPassword(auth, email, password);
         console.log("Account created!");
-        route.push("/dashboard");
+        route.push("/verifyotp");
       } else {
         await signInWithEmailAndPassword(auth, email, password);
         console.log("Logged in!");
-        route.push("/dashboard");
+        route.push("/verifyotp");
       }
     } catch (err: any) {
       if (err?.code === "auth/multi-factor-auth-required") {
@@ -93,7 +93,7 @@ const Login = () => {
       await mfaResolver.resolveSignIn(assertion);
 
       console.log("MFA verification successful!");
-      route.push("/dashboard");
+      route.push("/verifyotp");
     } catch (err: any) {
       setError("Invalid TOTP code: " + err.message);
       setTotpCode(""); // Clear the input for retry

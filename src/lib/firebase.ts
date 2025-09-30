@@ -4,13 +4,12 @@ import { getFirestore } from "firebase/firestore";
 
 // Client SDK needs different config (not service account)
 const firebaseConfig = {
-  apiKey: "AIzaSyDMZH_QbSN4zI1J90iOgRD-_zqc_rkwKkw",
-  authDomain: "vite-todo-app-265fa.firebaseapp.com",
-  projectId: "vite-todo-app-265fa",
-  storageBucket: "vite-todo-app-265fa.firebasestorage.app",
-  messagingSenderId: "505654985942",
-  appId: "1:505654985942:web:0981063630c72a9c5db577",
-  measurementId: "G-1J7ELYG5GQ",
+  apiKey: "AIzaSyCTM5_DoF5CdbVqOCpnd7_ps1e9wSahTMY",
+  authDomain: "logitrack-e1972.firebaseapp.com",
+  projectId: "logitrack-e1972",
+  storageBucket: "logitrack-e1972.firebasestorage.app",
+  messagingSenderId: "29625075825",
+  appId: "1:29625075825:web:0fcbaa6ff2bb1d9fe433d0",
 };
 
 const app = initializeApp(firebaseConfig);
