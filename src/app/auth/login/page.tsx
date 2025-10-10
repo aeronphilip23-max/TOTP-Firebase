@@ -12,10 +12,11 @@ import {
   getAuth,
   type MultiFactorError,
   sendPasswordResetEmail,
+  multiFactor,
 } from "firebase/auth"
 import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
-import { Package } from "lucide-react"
+import { Package, Eye, EyeOff } from "lucide-react"
 
 // UserRole interface
 interface UserRole {
@@ -37,6 +38,7 @@ const Login = () => {
   const [showForgotDialog, setShowForgotDialog] = useState(false)
   const [resetEmailValue, setResetEmailValue] = useState("")
   const [resetLoading, setResetLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false) // New state for password visibility
   const router = useRouter()
 
   // Role-based navigation function
@@ -53,6 +55,29 @@ const Login = () => {
     }
   };
 
+  // Check if user needs TOTP setup
+  const checkTOTPSetup = async (user: any) => {
+    try {
+      const enrolledFactors = await multiFactor(user).enrolledFactors;
+      const hasTOTP = enrolledFactors.some(factor => factor.factorId === TotpMultiFactorGenerator.FACTOR_ID);
+      
+      console.log("TOTP enrolled factors:", enrolledFactors);
+      console.log("User has TOTP setup:", hasTOTP);
+      
+      // If user doesn't have TOTP setup, redirect to setup page
+      if (!hasTOTP) {
+        console.log("Redirecting to TOTP setup page");
+        router.push("/verifyotp");
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Error checking TOTP setup:", error);
+      return true; // If there's an error, assume TOTP is set up to avoid blocking login
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setLoading(true)
@@ -65,24 +90,31 @@ const Login = () => {
       
       console.log("Logged in! User UID:", user.uid)
       
-      // Get user role from Firestore
-      const db = getFirestore()
-      const userDocRef = doc(db, "users", user.uid)
-      const userDoc = await getDoc(userDocRef)
+      // Check if user needs TOTP setup
+      const hasTOTP = await checkTOTPSetup(user);
       
-      if (userDoc.exists()) {
-        const userData = userDoc.data()
-        const role = userData.role || 'user'
+      if (hasTOTP) {
+        // Get user role from Firestore only if TOTP is already set up
+        const db = getFirestore()
+        const userDocRef = doc(db, "users", user.uid)
+        const userDoc = await getDoc(userDocRef)
         
-        console.log("User role from Firestore:", role)
-        console.log("User data:", userData)
-        
-        // Navigate based on role
-        navigateBasedOnRole(role)
-      } else {
-        setError("User document not found in database.")
-        console.error("No user document found for UID:", user.uid)
+        if (userDoc.exists()) {
+          const userData = userDoc.data()
+          const role = userData.role || 'user'
+          
+          console.log("User role from Firestore:", role)
+          console.log("User data:", userData)
+          
+          // Navigate based on role
+          navigateBasedOnRole(role)
+        } else {
+          setError("User document not found in database.")
+          console.error("No user document found for UID:", user.uid)
+        }
       }
+      // If TOTP is not set up, the user will be redirected to verifyotp page
+      // and the navigation will happen from there after TOTP setup
       
     } catch (err: any) {
       if (err?.code === "auth/multi-factor-auth-required") {
@@ -127,23 +159,28 @@ const Login = () => {
       
       console.log("MFA verification successful! User UID:", user.uid)
       
-      // Get user role from Firestore after MFA
-      const db = getFirestore()
-      const userDocRef = doc(db, "users", user.uid)
-      const userDoc = await getDoc(userDocRef)
+      // Check if user needs TOTP setup after MFA verification
+      const hasTOTP = await checkTOTPSetup(user);
       
-      if (userDoc.exists()) {
-        const userData = userDoc.data()
-        const role = userData.role || 'user'
+      if (hasTOTP) {
+        // Get user role from Firestore after MFA
+        const db = getFirestore()
+        const userDocRef = doc(db, "users", user.uid)
+        const userDoc = await getDoc(userDocRef)
         
-        console.log("User role from Firestore after MFA:", role)
-        console.log("User data after MFA:", userData)
-        
-        // Navigate based on role
-        navigateBasedOnRole(role)
-      } else {
-        setError("User document not found in database.")
-        console.error("No user document found for UID:", user.uid)
+        if (userDoc.exists()) {
+          const userData = userDoc.data()
+          const role = userData.role || 'user'
+          
+          console.log("User role from Firestore after MFA:", role)
+          console.log("User data after MFA:", userData)
+          
+          // Navigate based on role
+          navigateBasedOnRole(role)
+        } else {
+          setError("User document not found in database.")
+          console.error("No user document found for UID:", user.uid)
+        }
       }
       
     } catch (err: any) {
@@ -193,6 +230,11 @@ const Login = () => {
     }
   };
 
+  // Toggle password visibility
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)] flex items-center justify-center p-6">
       <div className="w-full max-w-md">
@@ -231,14 +273,27 @@ const Login = () => {
                     Forgot password?
                   </button>
                 </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder="••••••••"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] pr-10"
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={togglePasswordVisibility}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)] transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
               </div>
               {error && <p className="text-red-500 text-sm">{error}</p>}
               <button

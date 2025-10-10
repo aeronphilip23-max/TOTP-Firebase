@@ -7,6 +7,7 @@ import type { User } from "firebase/auth"
 import { useRouter } from "next/navigation"
 import { QRCodeSVG } from "qrcode.react"
 import { Package, Shield, CheckCircle } from "lucide-react"
+import { doc, getDoc, getFirestore } from "firebase/firestore"
 
 const firebaseConfig = {
   apiKey: "AIzaSyCTM5_DoF5CdbVqOCpnd7_ps1e9wSahTMY",
@@ -22,6 +23,7 @@ const auth = getAuth(app)
 
 const VerifyOTP = () => {
   const [user, setUser] = useState<User | null>(null)
+  const [userRole, setUserRole] = useState<string>("")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null)
@@ -30,9 +32,24 @@ const VerifyOTP = () => {
   const navigate = useRouter()
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+    const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       if (currentUser) {
         setUser(currentUser)
+        // Get user role from Firestore
+        try {
+          const db = getFirestore()
+          const userDocRef = doc(db, "users", currentUser.uid)
+          const userDoc = await getDoc(userDocRef)
+          
+          if (userDoc.exists()) {
+            const userData = userDoc.data()
+            const role = userData.role || 'user'
+            setUserRole(role)
+            console.log("User role in VerifyOTP:", role)
+          }
+        } catch (err) {
+          console.error("Error fetching user role:", err)
+        }
       } else {
         setUser(null)
         navigate.push("/auth/login")
@@ -40,6 +57,20 @@ const VerifyOTP = () => {
     })
     return () => unsubscribe()
   }, [navigate])
+
+  // Role-based navigation function
+  const navigateBasedOnRole = (role: string) => {
+    console.log("Navigating based on role from VerifyOTP:", role);
+    switch (role) {
+      case 'admin':
+        navigate.push("/dashboard/admin/dashboard");
+        break;
+      case 'user':
+      default:
+        navigate.push("/dashboard/staff");  
+        break;
+    }
+  };
 
   const enrollTotpMfa = async () => {
     if (!user) {
@@ -82,12 +113,19 @@ const VerifyOTP = () => {
       setError("")
       setTotpSecret(null)
       setTotpCode("")
+      
+      // Use the stored userRole for navigation
       setTimeout(() => {
-        navigate.push("/dashboard/staff")
+        navigateBasedOnRole(userRole)
       }, 2000)
     } catch (err) {
       setError("Error enrolling TOTP MFA: " + (err as Error).message)
     }
+  }
+
+  const handleSkip = () => {
+    // Navigate based on role when skipping
+    navigateBasedOnRole(userRole)
   }
 
   return (
@@ -112,7 +150,7 @@ const VerifyOTP = () => {
                 Two-Factor Authentication
               </h2>
               <p className="text-sm text-[oklch(0.45_0_0)] mb-6 text-center">
-                Welcome, {user.email || "User"}! Secure your account with 2FA.
+                Welcome, {user.email || "User"}! {userRole === 'admin' ? '(Admin)' : '(User)'} Secure your account with 2FA.
               </p>
 
               {!totpSecret ? (
@@ -129,7 +167,7 @@ const VerifyOTP = () => {
                     Enable TOTP MFA
                   </button>
                   <button
-                    onClick={() => navigate.push("/dashboard/staff")}
+                    onClick={handleSkip}
                     className="w-full px-4 py-3 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
                   >
                     Skip for Now
