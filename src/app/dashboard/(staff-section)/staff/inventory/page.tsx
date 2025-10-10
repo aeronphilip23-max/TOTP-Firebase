@@ -2,7 +2,7 @@
 
 import { Search, Package, CalendarIcon } from "lucide-react"
 import { useState } from "react"
-import { Calendar } from "@/components/ui/calendar"
+import { Calendar } from "@/src/components/ui/calendar"
 
 export default function InventoryPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())

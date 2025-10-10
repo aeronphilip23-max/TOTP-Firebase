@@ -2,7 +2,7 @@
 
 import { CalendarIcon, Clock } from "lucide-react"
 import { useState } from "react"
-import { Calendar } from "@/components/ui/calendar"
+import { Calendar } from "@/src/components/ui/calendar"
 
 export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())

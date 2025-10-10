@@ -2,8 +2,8 @@
 
 import { Package, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react"
 import { Bar, BarChart, Line, LineChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { Calendar } from "@/components/ui/calendar"
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/src/components/ui/chart"
+import { Calendar } from "@/src/components/ui/calendar"
 import { useState } from "react"
 
 export default function DashboardPage() {
