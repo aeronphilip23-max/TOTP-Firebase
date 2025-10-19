@@ -1,46 +1,36 @@
 "use client"
 
 import { Search, Package, CalendarIcon } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Calendar } from "@/src/components/ui/calendar"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+
 
 export default function InventoryPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
 
-  const [materials] = useState([
-    {
-      id: "MAT-001",
-      name: "Steel Beams",
-      category: "Structural",
-      quantity: 150,
-      unit: "units",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-002",
-      name: "Concrete Mix",
-      category: "Building Materials",
-      quantity: 2500,
-      unit: "kg",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-003",
-      name: "Electrical Cables",
-      category: "Electrical",
-      quantity: 5000,
-      unit: "meters",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-004",
-      name: "Piping Systems",
-      category: "Plumbing",
-      quantity: 300,
-      unit: "units",
-      location: "Warehouse",
-    },
-  ])
+  const [materials, setMaterials] = useState<Array<{
+      id?: string
+      name?: string
+      category?: string
+      quantity?: number
+      unit?: string
+      location?: string
+    }>>([])
+  
+    const getMaterials = async () => {
+      const querySnapshot = await getDocs(collection(db, "inventory"));
+      const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+      setMaterials(materialsList);
+    }
+  
+    useEffect(() => {
+      getMaterials();
+    }, []);
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
@@ -120,7 +110,7 @@ export default function InventoryPage() {
             <div className="flex justify-between items-center">
               <span className="text-sm text-[oklch(0.45_0_0)]">Low Stock</span>
               <span className="text-sm font-medium text-yellow-600">
-                {materials.filter((m) => m.quantity < 200).length}
+                {materials.filter((m) => (m.quantity ?? 0) < 200).length}
               </span>
             </div>
           </div>

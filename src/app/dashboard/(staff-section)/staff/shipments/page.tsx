@@ -1,35 +1,36 @@
 "use client"
 
 import { CalendarIcon, Search, Filter } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Calendar } from "@/src/components/ui/calendar"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, doc, setDoc } from "firebase/firestore";
 
 export default function ShipmentsPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
 
-  const [shipments] = useState([
-    {
-      id: "SH-001",
-      destination: "New York, NY",
-      status: "In Transit",
-      eta: "2024-01-15",
-      materials: "Steel Beams, Concrete Mix",
-    },
-    {
-      id: "SH-002",
-      destination: "Los Angeles, CA",
-      status: "Delivered",
-      eta: "2024-01-10",
-      materials: "Electrical Components",
-    },
-    {
-      id: "SH-003",
-      destination: "Chicago, IL",
-      status: "Pending",
-      eta: "2024-01-20",
-      materials: "Piping Systems",
-    },
-  ])
+  const [shipments, setShipments] = useState<Array<{
+      id: string
+      destination?: string
+      materials?: string
+      eta?: string
+      status?: string
+    }>>([])
+  
+    // Getting shipment data from db
+  
+    const getShipments = async () => {
+      const querySnapshot = await getDocs(collection(db, "shipments"));
+      const shipmentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+      setShipments(shipmentsData);
+    }
+  
+    useEffect(() => {
+      getShipments();
+    }, [])
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">

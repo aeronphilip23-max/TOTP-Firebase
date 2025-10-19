@@ -9,7 +9,7 @@ const firebaseConfig = {
   projectId: "logitrack-e1972",
   storageBucket: "logitrack-e1972.firebasestorage.app",
   messagingSenderId: "29625075825",
-  appId: "1:29625075825:web:0fcbaa6ff2bb1d9fe433d0",
+  appId: "1:29625075825:web:0fcbaa6ff2bb1d9fe433d0"
 }
 
 const app = initializeApp(firebaseConfig)
