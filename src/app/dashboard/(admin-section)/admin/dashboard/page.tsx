@@ -4,18 +4,33 @@ import { Package, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react"
 import { Bar, BarChart, Line, LineChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/src/components/ui/chart"
 import { Calendar } from "@/src/components/ui/calendar"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, doc, setDoc, sum } from "firebase/firestore";
+import { get } from "http"
 
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  
+  // get inventory data from db
+  const [inventoryData, setInventoryData] = useState<Array<{ 
+    id?: string;
+    name?: string;
+    quantity?: number
+  }>>([]);
+  
+  const getMaterials = async () => {
+    const querySnapshot = await getDocs(collection(db, "inventory"));
+    const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-  const inventoryData = [
-    { name: "Steel Beams", quantity: 150 },
-    { name: "Concrete Mix", quantity: 2500 },
-    { name: "Electrical Cables", quantity: 5000 },
-    { name: "Piping Systems", quantity: 300 },
-    { name: "Insulation", quantity: 800 },
-  ]
+    setInventoryData(materialsList);
+  }
+
+  useEffect(() => {
+    getMaterials();
+  }, []);
 
   const shipmentsData = [
     { month: "Jan", shipments: 45 },
@@ -29,7 +44,7 @@ export default function DashboardPage() {
   const stats = [
     {
       title: "Total Materials",
-      value: "3,950",
+      value: inventoryData.reduce((acc, item) => acc + (item.quantity || 0), 0).toString(),
       change: "+12.5%",
       icon: Package,
       color: "text-[oklch(0.68_0.19_35)]",

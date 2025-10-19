@@ -1,7 +1,11 @@
 "use client"
 
 import { Package, Plus, Search, Filter, X } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, doc, setDoc } from "firebase/firestore";
 
 export default function InventoryTab() {
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
@@ -13,54 +17,49 @@ export default function InventoryTab() {
     unit: "",
     location: "Warehouse",
   })
-  const [materials, setMaterials] = useState([
-    {
-      id: "MAT-001",
-      name: "Steel Beams",
-      category: "Structural",
-      quantity: 150,
-      unit: "units",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-002",
-      name: "Concrete Mix",
-      category: "Building Materials",
-      quantity: 2500,
-      unit: "kg",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-003",
-      name: "Electrical Cables",
-      category: "Electrical",
-      quantity: 5000,
-      unit: "meters",
-      location: "Warehouse",
-    },
-    {
-      id: "MAT-004",
-      name: "Piping Systems",
-      category: "Plumbing",
-      quantity: 300,
-      unit: "units",
-      location: "Warehouse",
-    },
-  ])
 
-  const handleAddMaterial = () => {
+  const [materials, setMaterials] = useState<Array<{
+    id?: string
+    name?: string
+    category?: string
+    quantity?: number
+    unit?: string
+    location?: string
+  }>>([])
+
+  const getMaterials = async () => {
+    const querySnapshot = await getDocs(collection(db, "inventory"));
+    const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    setMaterials(materialsList);
+  }
+
+  useEffect(() => {
+    getMaterials();
+  }, []);
+
+  const handleAddMaterial = async () => {
     if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
       alert("Please fill in all fields")
       return
     }
     const material = {
-      id: `MAT-${String(materials.length + 1).padStart(3, "0")}`,
+      id: `MAT-${String(materials.length + 1).padStart(4, "0")}`,
       name: newMaterial.name,
       category: newMaterial.category,
       quantity: Number.parseInt(newMaterial.quantity),
       unit: newMaterial.unit,
       location: newMaterial.location,
     }
+
+    await setDoc(doc(db, "inventory", material.id), {
+      name: material.name,
+      category: material.category,
+      quantity: material.quantity,
+      unit: material.unit,
+      location: material.location,
+    });
+
     setMaterials([...materials, material])
     setShowAddMaterialModal(false)
     setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })

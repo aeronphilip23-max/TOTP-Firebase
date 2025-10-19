@@ -1,7 +1,13 @@
 "use client"
 
 import { Plus, Search, Filter, X } from "lucide-react"
-import { useState } from "react"
+import { use, useState, useEffect } from "react"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+
+
 
 export default function ShipmentsTab() {
   const [showAddShipmentModal, setShowAddShipmentModal] = useState(false)
@@ -11,42 +17,49 @@ export default function ShipmentsTab() {
     materials: "",
     eta: "",
   })
-  const [shipments, setShipments] = useState([
-    {
-      id: "SH-001",
-      destination: "New York, NY",
-      status: "In Transit",
-      eta: "2024-01-15",
-      materials: "Steel Beams, Concrete Mix",
-    },
-    {
-      id: "SH-002",
-      destination: "Los Angeles, CA",
-      status: "Delivered",
-      eta: "2024-01-10",
-      materials: "Electrical Components",
-    },
-    {
-      id: "SH-003",
-      destination: "Chicago, IL",
-      status: "Pending",
-      eta: "2024-01-20",
-      materials: "Piping Systems",
-    },
-  ])
 
-  const handleAddShipment = () => {
+  const [shipments, setShipments] = useState<Array<{
+    id: string
+    destination?: string
+    materials?: string
+    eta?: string
+    status?: string
+  }>>([])
+
+  // Getting shipment data from db
+
+  const getShipments = async () => {
+    const querySnapshot = await getDocs(collection(db, "shipments"));
+    const shipmentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    setShipments(shipmentsData);
+  }
+
+  useEffect(() => {
+    getShipments();
+  }, [])
+
+
+  const handleAddShipment = async () => {
     if (!newShipment.destination || !newShipment.materials || !newShipment.eta) {
       alert("Please fill in all fields")
       return
     }
     const shipment = {
-      id: `SH-${String(shipments.length + 1).padStart(3, "0")}`,
+      id: `SH-${String(shipments.length + 1).padStart(4, "0")}`,
       destination: newShipment.destination,
       status: "Pending",
       eta: newShipment.eta,
       materials: newShipment.materials,
     }
+
+    await setDoc(doc(db, "shipments", shipment.id), {
+      destination: shipment.destination,
+      status: shipment.status,
+      eta: shipment.eta,
+      materials: shipment.materials,
+    });
+
     setShipments([...shipments, shipment])
     setShowAddShipmentModal(false)
     setNewShipment({ destination: "", materials: "", eta: "" })
