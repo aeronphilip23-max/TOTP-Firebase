@@ -4,40 +4,126 @@ import { Package, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react"
 import { Bar, BarChart, Line, LineChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/src/components/ui/chart"
 import { Calendar } from "@/src/components/ui/calendar"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+
+import { db } from "@/src/lib/firebase"
+
+import { collection, getDocs, onSnapshot, getAggregateFromServer, sum, count, getCountFromServer, where, or, query } from "firebase/firestore";
+
+
 
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
 
-  const inventoryData = [
-    { name: "Steel Beams", quantity: 150 },
-    { name: "Concrete Mix", quantity: 2500 },
-    { name: "Electrical Cables", quantity: 5000 },
-    { name: "Piping Systems", quantity: 300 },
-    { name: "Insulation", quantity: 800 },
-  ]
+  
+  const [inventoryData, setInventoryData] = useState<Array<{ 
+    id?: string;
+    name?: string;
+    quantity?: number
+  }>>([]);
 
-  const shipmentsData = [
-    { month: "Jan", shipments: 45 },
-    { month: "Feb", shipments: 52 },
-    { month: "Mar", shipments: 48 },
-    { month: "Apr", shipments: 61 },
-    { month: "May", shipments: 55 },
-    { month: "Jun", shipments: 67 },
-  ]
+  // inventory total and percentage variables 
+  const currentTotal = inventoryData.reduce((acc, item) => acc + (item.quantity || 0), 0);
+  const [totalMaterials, setTotalMaterials] = useState(0);
+  const [inventoryPercent, setInventoryPercent] = useState('');
+
+  // store active shipments count
+  const [activeShipmentsCount, setActiveShipmentsCount] = useState(0);
+  // store shipments data for chart
+  const [shipmentsData, setShipmentsData] = useState<Array<{ month: string; shipments: number }>>([]);
+
+  // get inventory data from db  
+  const getMaterials = async () => {
+    const querySnapshot = await getDocs(collection(db, "inventory"));
+    const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+    setInventoryData(materialsList);
+  }
+  
+  useEffect(() => {
+    getMaterials();
+  }, []);
+
+
+  // calculating percentage change from total materials in inventory
+  const getAggregateData = async () => {
+    const materialSnapshot = await getAggregateFromServer(collection(db, "inventory"), {
+      totalMaterials: sum("quantity")
+    });
+    setTotalMaterials(materialSnapshot.data().totalMaterials);
+  };
+
+  useEffect(() => {
+    getAggregateData();
+
+    const unsubscribe = onSnapshot(collection(db, "inventory"), (snapshot) => {
+      const percent = ((totalMaterials - currentTotal) / totalMaterials) * 100;
+      let percentString = "";
+      if (percent >= 0){
+        percentString = "+" + percent + "%";  
+        
+      } else {
+        percentString = "-" + percent + "%";
+      }
+      setInventoryPercent(percentString);
+    });
+    return () => unsubscribe();
+
+  }, [currentTotal, totalMaterials]);
+
+  
+  const getActiveShipmentsCount = async () => {
+    const q = query(collection(db, "shipments"), or(where("status", "==", "Pending"), where("status", "==", "In Transit")) );
+    const snapshot = await getCountFromServer(q);
+    setActiveShipmentsCount(snapshot.data().count);
+  }
+
+  
+
+  const getShipmentsData = async () => {
+    const shipmentsRef = collection(db, "shipments");
+    const q = query(shipmentsRef, where("status", "==", "Delivered"));
+    const querySnapshot = await getDocs(q);
+
+    const monthlyShipments = new Map<string, number>();
+    const monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    querySnapshot.forEach((doc) => {
+      const eta = doc.data().eta;
+      if (!eta) return;
+
+      const dateObj: Date = typeof eta?.toDate === "function" ? eta.toDate() : new Date(eta);
+      const month = dateObj.toLocaleString("default", { month: "short" });
+      monthlyShipments.set(month, (monthlyShipments.get(month) || 0) + 1);
+    });
+
+    // Convert map to sorted array (month only). Keep year empty to avoid type issues.
+    const chartData = Array.from(monthlyShipments.entries())
+      .map(([month, count]) => ({ month, year: "", shipments: count }))
+      .sort((a, b) => monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month));
+
+    setShipmentsData(chartData);
+  };
+
+  useEffect(() => {
+    getActiveShipmentsCount();
+    getShipmentsData();
+  }, []);
+
+
 
   const stats = [
     {
       title: "Total Materials",
-      value: "3,950",
-      change: "+12.5%",
+      value: currentTotal.toString(),
+      change: inventoryPercent,
       icon: Package,
       color: "text-[oklch(0.68_0.19_35)]",
       bgColor: "bg-[oklch(0.68_0.19_35)]/10",
     },
     {
       title: "Active Shipments",
-      value: "24",
+      value: activeShipmentsCount.toString(),
       change: "+8.2%",
       icon: TrendingUp,
       color: "text-blue-600",
@@ -91,19 +177,23 @@ export default function DashboardPage() {
           <ChartContainer
             config={{
               shipments: {
-                label: "Shipments",
-                color: "oklch(0.68 0.19 35)",
+          label: "Shipments",
+          color: "oklch(0.68 0.19 35)",
               },
             }}
             className="h-[300px]"
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={shipmentsData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Line type="monotone" dataKey="shipments" stroke="oklch(0.68 0.19 35)" strokeWidth={2} />
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis
+            dataKey="month"
+            tickFormatter={(month) => month}
+            interval={0} // Show all months
+          />
+          <YAxis />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          <Line type="monotone" dataKey="shipments" stroke="oklch(0.68 0.19 35)" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </ChartContainer>
