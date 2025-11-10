@@ -7,10 +7,27 @@ import { Calendar } from "@/src/components/ui/calendar"
 import { useState, useEffect } from "react"
 
 import { db } from "@/src/lib/firebase"
+import { LalamoveService } from '@/src/lib/services/lalamove';
 
-import { collection, getDocs, onSnapshot, getAggregateFromServer, sum, count, getCountFromServer, where, or, query } from "firebase/firestore";
+import { collection, getDocs, onSnapshot, getAggregateFromServer, sum, count, getCountFromServer, where, or, query, doc, setDoc } from "firebase/firestore";
 
 
+
+interface ShipmentWithTracking {
+  id: string;
+  destination: string;
+  materials: string;
+  eta: string;
+  status: string;
+  lalamoveOrderId?: string;
+  tracking?: {
+    lat: number;
+    lng: number;
+    driverName?: string;
+    driverPhone?: string;
+    lastUpdate: string;
+  };
+}
 
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
@@ -31,6 +48,8 @@ export default function DashboardPage() {
   const [activeShipmentsCount, setActiveShipmentsCount] = useState(0);
   // store shipments data for chart
   const [shipmentsData, setShipmentsData] = useState<Array<{ month: string; shipments: number }>>([]);
+  const lalamoveService = new LalamoveService();
+  const [shipments, setShipments] = useState<ShipmentWithTracking[]>([]);
 
   // get inventory data from db  
   const getMaterials = async () => {
@@ -71,7 +90,7 @@ export default function DashboardPage() {
 
   }, [currentTotal, totalMaterials]);
 
-  
+
   const getActiveShipmentsCount = async () => {
     const q = query(collection(db, "shipments"), or(where("status", "==", "Pending"), where("status", "==", "In Transit")) );
     const snapshot = await getCountFromServer(q);
@@ -104,6 +123,57 @@ export default function DashboardPage() {
 
     setShipmentsData(chartData);
   };
+
+  // Add this function to update tracking info
+  const updateShipmentTracking = async (shipment: ShipmentWithTracking) => {
+    if (!shipment.lalamoveOrderId) return;
+
+    try {
+      const orderStatus = await lalamoveService.getOrderStatus(shipment.lalamoveOrderId);
+      
+      // Update shipment in Firestore
+      await setDoc(doc(db, "shipments", shipment.id), {
+        ...shipment,
+        status: orderStatus.status,
+        tracking: {
+          lat: orderStatus.tracking?.lat,
+          lng: orderStatus.tracking?.lng,
+          driverName: orderStatus.driver?.name,
+          driverPhone: orderStatus.driver?.phone,
+          lastUpdate: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      console.error('Error updating tracking:', error);
+    }
+  };
+
+  // Modify your existing getShipments function
+  const getShipments = async () => {
+    const querySnapshot = await getDocs(collection(db, "shipments"));
+    const shipmentsData = querySnapshot.docs.map(doc => ({ 
+      id: doc.id, 
+      ...doc.data() 
+    })) as ShipmentWithTracking[];
+
+    // Update tracking for all shipments with Lalamove orders
+    await Promise.all(
+      shipmentsData
+        .filter(s => s.lalamoveOrderId)
+        .map(updateShipmentTracking)
+    );
+
+    setShipments(shipmentsData);
+  };
+
+  // Add tracking update interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      getShipments();
+    }, 60000); // Update every minute
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     getActiveShipmentsCount();

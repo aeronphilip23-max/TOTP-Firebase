@@ -1,21 +1,25 @@
 "use client"
 
 import { Plus, Search, Filter, X } from "lucide-react"
-import { use, useState, useEffect } from "react"
+import React, { useEffect, useState } from "react";
+import { collection, getDocs, setDoc, doc } from "firebase/firestore";
 
-import { db } from "@/src/lib/firebase"
-
-import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+import { db } from "@/src/lib/firebase";
 
 
 
 export default function ShipmentsTab() {
   const [showAddShipmentModal, setShowAddShipmentModal] = useState(false)
   const [showFilterShipmentsModal, setShowFilterShipmentsModal] = useState(false)
+
   const [newShipment, setNewShipment] = useState({
     destination: "",
     materials: "",
     eta: "",
+    // optional fields to allow lat/lng entry in UI later
+    deliveryAddress: "",
+    deliveryLat: undefined as number | undefined,
+    deliveryLng: undefined as number | undefined,
   })
 
   const [shipments, setShipments] = useState<Array<{
@@ -24,14 +28,13 @@ export default function ShipmentsTab() {
     materials?: string
     eta?: string
     status?: string
+    lalamoveOrderId?: string | null
   }>>([])
 
   // Getting shipment data from db
-
   const getShipments = async () => {
     const querySnapshot = await getDocs(collection(db, "shipments"));
     const shipmentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
     setShipments(shipmentsData);
   }
 
@@ -39,30 +42,79 @@ export default function ShipmentsTab() {
     getShipments();
   }, [])
 
-
   const handleAddShipment = async () => {
     if (!newShipment.destination || !newShipment.materials || !newShipment.eta) {
       alert("Please fill in all fields")
       return
     }
-    const shipment = {
-      id: `SH-${String(shipments.length + 1).padStart(4, "0")}`,
+
+    const shipmentId = `SH-${String(shipments.length + 1).padStart(4, "0")}`
+    const shipmentRecord = {
+      id: shipmentId,
       destination: newShipment.destination,
       status: "Pending",
       eta: newShipment.eta,
       materials: newShipment.materials,
     }
 
-    await setDoc(doc(db, "shipments", shipment.id), {
-      destination: shipment.destination,
-      status: shipment.status,
-      eta: shipment.eta,
-      materials: shipment.materials,
-    });
+    try {
+      const pickupLat = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LAT || '0');
+      const pickupLng = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LNG || '0');
+      const pickupAddress = process.env.NEXT_PUBLIC_WAREHOUSE_ADDRESS || "Warehouse";
 
-    setShipments([...shipments, shipment])
-    setShowAddShipmentModal(false)
-    setNewShipment({ destination: "", materials: "", eta: "" })
+      const deliveryLat = newShipment.deliveryLat ?? 0;
+      const deliveryLng = newShipment.deliveryLng ?? 0;
+      const deliveryAddress = newShipment.deliveryAddress || newShipment.destination;
+
+      const response = await fetch('/api/lalamove/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceType: 'TRUCK',
+          stops: [
+            { 
+              location: { lat: pickupLat, lng: pickupLng }, 
+              addresses: { en_PH: pickupAddress }  // changed from en_HK
+            },
+            { 
+              location: { lat: deliveryLat, lng: deliveryLng }, 
+              addresses: { en_PH: deliveryAddress }  // changed from en_HK
+            }
+          ],
+          requesterContact: {
+            name: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_NAME || "Sender",
+            phone: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_PHONE || ""
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create delivery');
+      }
+
+      const lalamoveResp = await response.json();
+      // Lalamove v3 typically returns { id: 'orderId' }
+      const lalamoveOrderId = lalamoveResp?.id || lalamoveResp?.orderId || null;
+
+      // Persist shipment to Firestore including lalamoveOrderId
+      await setDoc(doc(db, "shipments", shipmentId), {
+        destination: shipmentRecord.destination,
+        status: shipmentRecord.status,
+        eta: shipmentRecord.eta,
+        materials: shipmentRecord.materials,
+        lalamoveOrderId,
+        createdAt: new Date().toISOString()
+      });
+
+      // update local state
+      setShipments(prev => [...prev, { ...shipmentRecord, lalamoveOrderId }])
+      setShowAddShipmentModal(false)
+      setNewShipment({ destination: "", materials: "", eta: "", deliveryAddress: "", deliveryLat: undefined, deliveryLng: undefined })
+    } catch (error: any) {
+      console.error("Error creating shipment:", error);
+      alert(error.message || "Failed to create shipment");
+    }
   }
 
   return (
