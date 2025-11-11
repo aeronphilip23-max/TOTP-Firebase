@@ -50,6 +50,22 @@ export default function SettingsPage() {
               />
             </div>
             <div>
+              <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Gender</label>
+              <input
+                type="text"
+                defaultValue="Male"
+                className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Age</label>
+              <input
+                type="text"
+                defaultValue="47"
+                className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+              />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Email Address</label>
               <input
                 type="email"
@@ -77,6 +93,13 @@ export default function SettingsPage() {
         <div className="bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)]">
           <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)] mb-6">Change Password</h2>
           <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Change Email</label>
+              <input
+                type="email"
+                className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+              />
+            </div>
             <div>
               <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Current Password</label>
               <input

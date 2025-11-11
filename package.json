@@ -11,6 +11,7 @@
   "dependencies": {
     "@eslint/eslintrc": "latest",
     "@hookform/resolvers": "^3.10.0",
+    "@lalamove/lalamove-js": "^1.1.0",
     "@radix-ui/react-accordion": "latest",
     "@radix-ui/react-alert-dialog": "latest",
     "@radix-ui/react-aspect-ratio": "latest",
