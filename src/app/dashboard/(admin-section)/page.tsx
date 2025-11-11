@@ -51,7 +51,7 @@ export default function DashboardPage() {
       setInventoryData(materialsList)
 
       const total = materialsList.reduce((sum, item) => sum + (item.quantity || 0), 0)
-      const lowStock = materialsList.filter(item => (item.quantity || 0) < 10).length
+      const lowStock = materialsList.filter(item => (item.quantity || 0) < 100).length
       setTotalMaterials(total)
       setLowStockCount(lowStock)
     } catch (error) {

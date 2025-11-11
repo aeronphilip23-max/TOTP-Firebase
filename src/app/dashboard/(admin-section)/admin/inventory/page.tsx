@@ -148,6 +148,8 @@ export default function InventoryTab() {
     applyFilters(searchQuery, selectedCategory, selectedStockLevel);
     setShowAddMaterialModal(false)
     setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+
+    await getMaterials();
   }
 
   // Replace updateQuantity with prompt-based amount input
@@ -212,9 +214,9 @@ export default function InventoryTab() {
   }
 
   const getStockLevelBadge = (quantity: number | undefined) => {
-    if (!quantity) return null;
-    if (quantity < 10) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
-    if (quantity <= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
+    if (!quantity) return { label: "Out of Stock", color: "bg-gray-100 text-gray-700" };
+    if (quantity < 100) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
+    if (quantity >= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
   }
 
   return (
@@ -453,7 +455,6 @@ export default function InventoryTab() {
                   <option value="All">All Stock Levels</option>
                   <option value="Low Stock">Low Stock</option>
                   <option value="In Stock">In Stock</option>
-                  <option value="Overstocked">Overstocked</option>
                 </select>
               </div>
             </div>

@@ -7,10 +7,53 @@ import { useState, useEffect } from "react"
 import { db } from "@/src/lib/firebase"
 
 import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+import { get } from "http";
 
+const UNIT_MEASUREMENTS = [
+"units",
+"kg",
+"g",
+"lbs",
+"oz",
+"liters",
+"ml",
+"gallons",
+"cubic meters",
+"cubic feet",
+"meters",
+"feet",
+"inches",
+"cm",
+"mm",
+"tons",
+"boxes",
+"pallets",
+"rolls",
+"sheets",
+"pieces",
+]
+
+const CATEGORIES = [
+"Structural",
+"Building Materials",
+"Electrical",
+"Plumbing",
+"Safety Equipment",
+"Tools",
+"Other",
+]
+
+const STOCK_LEVELS = {
+  "Low Stock": (qty: number) => qty < 10,
+  "In Stock": (qty: number) => qty >= 10 && qty <= 100,
+}
 export default function InventoryTab() {
-  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
+const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
   const [showFilterInventoryModal, setShowFilterInventoryModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedCategory, setSelectedCategory] = useState("All Categories")
+  const [selectedStockLevel, setSelectedStockLevel] = useState("All")
+
   const [newMaterial, setNewMaterial] = useState({
     name: "",
     category: "",
@@ -28,10 +71,19 @@ export default function InventoryTab() {
     location?: string
   }>>([])
 
+  const [allMaterials, setAllMaterials] = useState<Array<{
+    id?: string
+    name?: string
+    category?: string
+    quantity?: number
+    unit?: string
+    location?: string
+  }>>([])
+
   const getMaterials = async () => {
     const querySnapshot = await getDocs(collection(db, "inventory"));
     const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
+    setAllMaterials(materialsList);
     setMaterials(materialsList);
   }
 
@@ -39,13 +91,44 @@ export default function InventoryTab() {
     getMaterials();
   }, []);
 
+  const applyFilters = (query: string = searchQuery, category: string = selectedCategory, stockLevel: string = selectedStockLevel) => {
+    let filtered = allMaterials;
+
+    if (query) {
+      filtered = filtered.filter(m =>
+        m.id?.toLowerCase().includes(query.toLowerCase()) ||
+        m.name?.toLowerCase().includes(query.toLowerCase()) ||
+        m.category?.toLowerCase().includes(query.toLowerCase())
+      );
+    }
+
+    if (category !== "All Categories") {
+      filtered = filtered.filter(m => m.category === category);
+    }
+
+    if (stockLevel !== "All") {
+      filtered = filtered.filter(m => {
+        const checker = STOCK_LEVELS[stockLevel as keyof typeof STOCK_LEVELS];
+        return checker ? checker(m.quantity || 0) : true;
+      });
+    }
+
+    setMaterials(filtered);
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applyFilters(query, selectedCategory, selectedStockLevel);
+  }
+
   const handleAddMaterial = async () => {
     if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
       alert("Please fill in all fields")
       return
     }
     const material = {
-      id: `MAT-${String(materials.length + 1).padStart(4, "0")}`,
+      id: `MAT-${String(allMaterials.length + 1).padStart(4, "0")}`,
       name: newMaterial.name,
       category: newMaterial.category,
       quantity: Number.parseInt(newMaterial.quantity),
@@ -61,10 +144,21 @@ export default function InventoryTab() {
       location: material.location,
     });
 
-    setMaterials([...materials, material])
+    const updated = [...allMaterials, material];
+    setAllMaterials(updated);
+    applyFilters(searchQuery, selectedCategory, selectedStockLevel);
     setShowAddMaterialModal(false)
     setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+
+    await getMaterials();
   }
+
+  const getStockLevelBadge = (quantity: number | undefined) => {
+    if (!quantity) return { label: "Out of Stock", color: "bg-gray-100 text-gray-700" };
+    if (quantity < 100) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
+    if (quantity >= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
+  }
+
 
   return (
     <>
@@ -85,7 +179,9 @@ export default function InventoryTab() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[oklch(0.45_0_0)]" />
             <input
               type="text"
-              placeholder="Search materials..."
+              placeholder="Search by ID, name, or category..."
+              value={searchQuery}
+              onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
             />
           </div>
@@ -94,7 +190,7 @@ export default function InventoryTab() {
             className="flex items-center gap-2 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)]"
           >
             <Filter className="h-5 w-5" />
-            Filter by Category
+            Filter
           </button>
         </div>
 
@@ -111,7 +207,10 @@ export default function InventoryTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[oklch(0.88_0_0)]">
-              {materials.map((material) => (
+              {materials.map((material) => {
+                const stockBadge = getStockLevelBadge(material.quantity);
+                return (
+                
                 <tr key={material.id} className="hover:bg-[oklch(0.98_0_0)]">
                   <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.id}</td>
                   <td className="px-6 py-4">
@@ -124,159 +223,170 @@ export default function InventoryTab() {
                   <td className="px-6 py-4 text-sm text-[oklch(0.18_0.08_250)] font-medium">
                     {material.quantity} {material.unit}
                   </td>
+                  <td className="px-6 py-4 text-sm">
+                        {stockBadge && (
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${stockBadge.color}`}>
+                            {stockBadge.label}
+                          </span>
+                        )}
+                      </td>
                   <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.location}</td>
                 </tr>
-              ))}
+              )
+              } )}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* Add Material Modal */}
-      {showAddMaterialModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Add New Material</h2>
-              <button
-                onClick={() => setShowAddMaterialModal(false)}
-                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material Name</label>
-                <input
-                  type="text"
-                  value={newMaterial.name}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder="e.g., Steel Beams"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
-                <select
-                  value={newMaterial.category}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, category: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                >
-                  <option value="">Select category</option>
-                  <option>Structural</option>
-                  <option>Building Materials</option>
-                  <option>Electrical</option>
-                  <option>Plumbing</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Quantity</label>
-                  <input
-                    type="number"
-                    value={newMaterial.quantity}
-                    onChange={(e) => setNewMaterial({ ...newMaterial, quantity: e.target.value })}
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                    placeholder="0"
-                  />
+            {showAddMaterialModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Add New Material</h2>
+                    <button
+                      onClick={() => setShowAddMaterialModal(false)}
+                      className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material Name</label>
+                      <input
+                        type="text"
+                        value={newMaterial.name}
+                        onChange={(e) => setNewMaterial({ ...newMaterial, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                        placeholder="e.g., Steel Beams"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
+                      <select
+                        value={newMaterial.category}
+                        onChange={(e) => setNewMaterial({ ...newMaterial, category: e.target.value })}
+                        className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                      >
+                        <option value="">Select category</option>
+                        {CATEGORIES.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Quantity</label>
+                        <input
+                          type="number"
+                          value={newMaterial.quantity}
+                          onChange={(e) => setNewMaterial({ ...newMaterial, quantity: e.target.value })}
+                          className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
+                        <select
+                          value={newMaterial.unit}
+                          onChange={(e) => setNewMaterial({ ...newMaterial, unit: e.target.value })}
+                          className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                        >
+                          <option value="">Select unit</option>
+                          {UNIT_MEASUREMENTS.map(unit => (
+                            <option key={unit} value={unit}>{unit}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Location</label>
+                      <input
+                        type="text"
+                        value={newMaterial.location}
+                        onChange={(e) => setNewMaterial({ ...newMaterial, location: e.target.value })}
+                        className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                        placeholder="Warehouse"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={() => setShowAddMaterialModal(false)}
+                      className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddMaterial}
+                      className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+                    >
+                      Add Material
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
-                  <input
-                    type="text"
-                    value={newMaterial.unit}
-                    onChange={(e) => setNewMaterial({ ...newMaterial, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                    placeholder="e.g., units, kg"
-                  />
+              </div>
+            )}
+      
+            {/* Filter Inventory Modal */}
+            {showFilterInventoryModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Filter Materials</h2>
+                    <button
+                      onClick={() => setShowFilterInventoryModal(false)}
+                      className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
+                      <select 
+                        value={selectedCategory}
+                        onChange={(e) => {
+                          setSelectedCategory(e.target.value);
+                          applyFilters(searchQuery, e.target.value, selectedStockLevel);
+                        }}
+                        className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                      >
+                        <option>All Categories</option>
+                        {CATEGORIES.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Stock Level</label>
+                      <select 
+                        value={selectedStockLevel}
+                        onChange={(e) => {
+                          setSelectedStockLevel(e.target.value);
+                          applyFilters(searchQuery, selectedCategory, e.target.value);
+                        }}
+                        className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                      >
+                        <option value="All">All Stock Levels</option>
+                        <option value="Low Stock">Low Stock</option>
+                        <option value="In Stock">In Stock</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={() => setShowFilterInventoryModal(false)}
+                      className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Location</label>
-                <input
-                  type="text"
-                  value={newMaterial.location}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, location: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder="Warehouse"
-                />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowAddMaterialModal(false)}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddMaterial}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                Add Material
-              </button>
-            </div>
-          </div>
-          
-        </div>
-
-      )}
-
-      {/* Filter Inventory Modal */}
-      {showFilterInventoryModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Filter by Category</h2>
-              <button
-                onClick={() => setShowFilterInventoryModal(false)}
-                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>All Categories</option>
-                  <option>Structural</option>
-                  <option>Building Materials</option>
-                  <option>Electrical</option>
-                  <option>Plumbing</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Stock Level</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>All</option>
-                  <option>Low Stock</option>
-                  <option>In Stock</option>
-                  <option>Overstocked</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowFilterInventoryModal(false)}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  alert("Filters applied!")
-                  setShowFilterInventoryModal(false)
-                }}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                Apply Filters
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            )}
     </>
   )
 }
