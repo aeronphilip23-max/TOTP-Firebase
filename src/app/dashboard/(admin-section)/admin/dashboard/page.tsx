@@ -263,7 +263,7 @@ export default function DashboardPage() {
   return (
     <div className="grid lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
-        <h1 className="text-3xl font-bold text-[oklch(0.18_0.08_250)]">Dashboard Overview</h1>
+        <h1 className="text-3xl font-bold text-[oklch(0.18_0.08_250)]">Dashboard</h1>
 
         {/* Stats Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
