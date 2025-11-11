@@ -12,8 +12,8 @@ interface LalamoveConfig {
 const config: LalamoveConfig = {
   baseUrl: process.env.LALAMOVE_BASE_URL || "https://rest.sandbox.lalamove.com",
   // prefer server-side var; fall back to NEXT_PUBLIC if needed
-  apiKey: process.env.LALAMOVE_API_KEY || process.env.NEXT_PUBLIC_LALAMOVE_API_KEY || "",
-  apiSecret: process.env.LALAMOVE_API_SECRET || "",
+  apiKey: "pk_test_433c0efdc50c8aefee5abe50ebba24af",
+  apiSecret: "sk_test_Gtt9pzn4cdM89cf1FcQ/3WN++nWcBh645mSRM5C0FU+qGFs6Y97l5IB9wjlqwbBl",
   market: process.env.LALAMOVE_MARKET || process.env.NEXT_PUBLIC_LALAMOVE_MARKET || "PH",
   locale: process.env.LALAMOVE_LOCALE || "en_PH",
 };

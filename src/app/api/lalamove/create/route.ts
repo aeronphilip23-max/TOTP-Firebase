@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { LalamoveService } from "@/src/lib/services/lalamove";
+import { MockLalamoveService } from "@/src/lib/services/mock-lalamove";
 import { geocodeAddress, isValidCoordinate } from "@/src/lib/services/geocoding";
 
 async function geocodeStop(stop: any, index: number) {
@@ -123,7 +124,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const svc = new LalamoveService();
+    // const svc = new LalamoveService();
+    const svc = new MockLalamoveService();
 
     try {
       // Add shipment ID as partner order ID for tracking

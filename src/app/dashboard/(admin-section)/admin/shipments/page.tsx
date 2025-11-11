@@ -1,22 +1,30 @@
 "use client"
 
-import { Plus, Search, Filter, X } from "lucide-react"
+import { Plus, Search, Filter, X, Lock } from "lucide-react"
 import React, { useEffect, useState } from "react";
-import { collection, getDocs, setDoc, doc } from "firebase/firestore";
+import { collection, getDocs, setDoc, doc, updateDoc } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
 
-
+interface Material {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+}
 
 export default function ShipmentsTab() {
   const [showAddShipmentModal, setShowAddShipmentModal] = useState(false)
   const [showFilterShipmentsModal, setShowFilterShipmentsModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedStatus, setSelectedStatus] = useState("ALL")
+  const [materials, setMaterials] = useState<Material[]>([])
 
   const [newShipment, setNewShipment] = useState({
     destination: "",
-    materials: "",
+    selectedMaterialId: "",
+    quantity: "",
     eta: "",
-    // optional fields to allow lat/lng entry in UI later
     deliveryAddress: "",
     deliveryLat: undefined as number | undefined,
     deliveryLng: undefined as number | undefined,
@@ -29,32 +37,143 @@ export default function ShipmentsTab() {
     eta?: string
     status?: string
     lalamoveOrderId?: string | null
+    quantity?: number
+    materialId?: string
   }>>([])
+
+  const [allShipments, setAllShipments] = useState<Array<{
+    id: string
+    destination?: string
+    materials?: string
+    eta?: string
+    status?: string
+    lalamoveOrderId?: string | null
+    quantity?: number
+    materialId?: string
+  }>>([])
+
+  // Load materials from inventory
+  const getMaterials = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "inventory"))
+      const materialsList = querySnapshot.docs.map(doc => {
+        const data = doc.data() as any
+        return {
+          id: doc.id,
+          name: data.name || "Unknown",
+          quantity: typeof data.quantity === "number" ? data.quantity : 0,
+          unit: data.unit || "units"
+        }
+      }).filter(m => m.quantity > 0)
+      setMaterials(materialsList)
+    } catch (error) {
+      console.error("Error loading materials:", error)
+    }
+  }
 
   // Getting shipment data from db
   const getShipments = async () => {
-    const querySnapshot = await getDocs(collection(db, "shipments"));
-    const shipmentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    setShipments(shipmentsData);
+    try {
+      const querySnapshot = await getDocs(collection(db, "shipments"));
+      const shipmentsData = querySnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      }));
+      setAllShipments(shipmentsData as any);
+      setShipments(shipmentsData as any);
+    } catch (error) {
+      console.error("Error loading shipments:", error);
+      alert("Failed to load shipments");
+    }
   }
 
   useEffect(() => {
+    getMaterials()
     getShipments();
   }, [])
 
+  // Search and filter logic
+  const applyFilters = (query: string = searchQuery, status: string = selectedStatus) => {
+    let filtered = allShipments;
+
+    if (query) {
+      filtered = filtered.filter(s =>
+        s.id.toLowerCase().includes(query.toLowerCase()) ||
+        s.destination?.toLowerCase().includes(query.toLowerCase()) ||
+        s.materials?.toLowerCase().includes(query.toLowerCase())
+      );
+    }
+
+    if (status !== "ALL") {
+      filtered = filtered.filter(s => s.status === status);
+    }
+
+    setShipments(filtered);
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applyFilters(query, selectedStatus);
+  }
+
+  const handleStatusFilterChange = (status: string) => {
+    setSelectedStatus(status);
+    applyFilters(searchQuery, status);
+  }
+
+  const getSelectedMaterial = () => {
+    return materials.find(m => m.id === newShipment.selectedMaterialId)
+  }
+
+  const handleMaterialChange = (materialId: string) => {
+    setNewShipment({
+      ...newShipment,
+      selectedMaterialId: materialId,
+      quantity: "" // Reset quantity when material changes
+    })
+  }
+
+  const handleQuantityChange = (value: string) => {
+    // Only allow positive integers
+    if (value === "") {
+      setNewShipment({ ...newShipment, quantity: "" })
+      return
+    }
+
+    const numValue = parseInt(value, 10)
+    if (!isNaN(numValue) && numValue > 0) {
+      const selectedMaterial = getSelectedMaterial()
+      if (selectedMaterial && numValue <= selectedMaterial.quantity) {
+        setNewShipment({ ...newShipment, quantity: value })
+      } else if (!selectedMaterial) {
+        setNewShipment({ ...newShipment, quantity: value })
+      }
+    }
+  }
+
   const handleAddShipment = async () => {
-    if (!newShipment.destination || !newShipment.materials || !newShipment.eta) {
+    if (!newShipment.destination || !newShipment.selectedMaterialId || !newShipment.quantity || !newShipment.eta) {
       alert("Please fill in all fields")
       return
     }
 
-    const shipmentId = `SH-${String(shipments.length + 1).padStart(4, "0")}`
+    const selectedMaterial = getSelectedMaterial()
+    if (!selectedMaterial) {
+      alert("Selected material not found")
+      return
+    }
+
+    const shipmentQuantity = parseInt(newShipment.quantity, 10)
+    const shipmentId = `SH-${String(allShipments.length + 1).padStart(4, "0")}`
+    const materialsString = `${selectedMaterial.name} (${newShipment.quantity} ${selectedMaterial.unit})`
+    
     const shipmentRecord = {
       id: shipmentId,
       destination: newShipment.destination,
-      status: "Pending",
+      status: "ASSIGNING_DRIVER",
       eta: newShipment.eta,
-      materials: newShipment.materials,
+      materials: materialsString,
     }
 
     try {
@@ -74,11 +193,11 @@ export default function ShipmentsTab() {
           stops: [
             { 
               location: { lat: pickupLat, lng: pickupLng }, 
-              addresses: { en_PH: pickupAddress }  // changed from en_HK
+              addresses: { en_PH: pickupAddress }
             },
             { 
               location: { lat: deliveryLat, lng: deliveryLng }, 
-              addresses: { en_PH: deliveryAddress }  // changed from en_HK
+              addresses: { en_PH: deliveryAddress }
             }
           ],
           requesterContact: {
@@ -94,8 +213,13 @@ export default function ShipmentsTab() {
       }
 
       const lalamoveResp = await response.json();
-      // Lalamove v3 typically returns { id: 'orderId' }
       const lalamoveOrderId = lalamoveResp?.id || lalamoveResp?.orderId || null;
+
+      // Deduct from inventory
+      const newInventoryQuantity = selectedMaterial.quantity - shipmentQuantity
+      await updateDoc(doc(db, "inventory", newShipment.selectedMaterialId), {
+        quantity: newInventoryQuantity
+      })
 
       // Persist shipment to Firestore including lalamoveOrderId
       await setDoc(doc(db, "shipments", shipmentId), {
@@ -103,19 +227,90 @@ export default function ShipmentsTab() {
         status: shipmentRecord.status,
         eta: shipmentRecord.eta,
         materials: shipmentRecord.materials,
+        materialId: newShipment.selectedMaterialId,
+        quantity: shipmentQuantity,
         lalamoveOrderId,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
 
       // update local state
-      setShipments(prev => [...prev, { ...shipmentRecord, lalamoveOrderId }])
+      const newShipmentData = { 
+        ...shipmentRecord, 
+        lalamoveOrderId,
+        materialId: newShipment.selectedMaterialId,
+        quantity: shipmentQuantity
+      };
+      setAllShipments(prev => [...prev, newShipmentData as any]);
+      setShipments(prev => [...prev, newShipmentData as any]);
+
+      // Update materials list
+      await getMaterials()
+      
       setShowAddShipmentModal(false)
-      setNewShipment({ destination: "", materials: "", eta: "", deliveryAddress: "", deliveryLat: undefined, deliveryLng: undefined })
+      setNewShipment({ destination: "", selectedMaterialId: "", quantity: "", eta: "", deliveryAddress: "", deliveryLat: undefined, deliveryLng: undefined })
     } catch (error: any) {
       console.error("Error creating shipment:", error);
       alert(error.message || "Failed to create shipment");
     }
   }
+
+  const updateDeliveryStatus = async (
+    shipmentId: string,
+    lalamoveId: string | null | undefined,
+    newStatus: string,
+    shipment: typeof shipments[0]
+  ) => {
+    // Check if already cancelled
+    if (shipment.status === "CANCELED") {
+      alert("Cannot change status of a cancelled shipment");
+      return
+    }
+
+    if (!lalamoveId) {
+      alert("Cannot update delivery status because shipment has no Lalamove order ID.");
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+
+      // If changing to CANCELED, refund inventory
+      if (newStatus === "CANCELED" && shipment.status !== "CANCELED") {
+        const material = materials.find(m => m.id === shipment.materialId)
+        if (material && shipment.quantity && shipment.materialId) {
+          const refundedQuantity = material.quantity + shipment.quantity
+          await updateDoc(doc(db, "inventory", shipment.materialId), {
+            quantity: refundedQuantity
+          })
+          await getMaterials()
+        }
+      }
+
+      // Update mock delivery document in mockDeliveries collection
+      await updateDoc(doc(db, "mockDeliveries", String(lalamoveId)), {
+        status: newStatus,
+        updated_at: now,
+      });
+
+      // Update shipment document status to match
+      await updateDoc(doc(db, "shipments", shipmentId), {
+        status: newStatus,
+        updatedAt: now
+      });
+
+      console.log(`Updated ${shipmentId} and mock delivery ${lalamoveId} to ${newStatus}`);
+      
+      // Refresh data
+      await getShipments();
+    } catch (err: any) {
+      console.error("Failed to update status:", err);
+      alert("Failed to update status: " + (err?.message || String(err)));
+    }
+  }
+
+  const selectedMaterial = getSelectedMaterial()
+  const maxQuantity = selectedMaterial?.quantity || 0
 
   return (
     <>
@@ -136,7 +331,9 @@ export default function ShipmentsTab() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[oklch(0.45_0_0)]" />
             <input
               type="text"
-              placeholder="Search shipments..."
+              placeholder="Search by ID, destination, or materials..."
+              value={searchQuery}
+              onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
             />
           </div>
@@ -150,47 +347,73 @@ export default function ShipmentsTab() {
         </div>
 
         <div className="space-y-4">
-          {shipments.map((shipment) => (
-            <div
-              key={shipment.id}
-              className="bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)] hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-[oklch(0.18_0.08_250)]">{shipment.id}</h3>
-                  <p className="text-[oklch(0.45_0_0)]">{shipment.destination}</p>
-                </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    shipment.status === "Delivered"
-                      ? "bg-green-100 text-green-700"
-                      : shipment.status === "In Transit"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-yellow-100 text-yellow-700"
-                  }`}
+          {shipments.length === 0 ? (
+            <p className="text-[oklch(0.45_0_0)] text-center py-8">No shipments found.</p>
+          ) : (
+            shipments.map((shipment) => {
+              const isCancelled = shipment.status === "CANCELED"
+              return (
+                <div
+                  key={shipment.id}
+                  className={`bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)] hover:shadow-md transition-shadow ${isCancelled ? 'opacity-75' : ''}`}
                 >
-                  {shipment.status}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-[oklch(0.45_0_0)]">ETA:</span>
-                  <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium">{shipment.eta}</span>
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-[oklch(0.18_0.08_250)]">{shipment.id}</h3>
+                      <p className="text-[oklch(0.45_0_0)]">{shipment.destination}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* {isCancelled && (
+                        // <Lock className="h-5 w-5 text-red-600" />
+                      )} */}
+                      <select
+                        value={shipment.status ?? 'ASSIGNING_DRIVER'}
+                        onChange={(e) => updateDeliveryStatus(
+                          shipment.id,
+                          shipment.lalamoveOrderId,
+                          e.target.value,
+                          shipment
+                        )}
+                        disabled={isCancelled}
+                        className={`px-3 py-1 rounded-full text-sm font-medium border-2 cursor-pointer ${
+                          shipment.status === "COMPLETED"
+                            ? "bg-green-100 text-green-700 border-green-300"
+                            : shipment.status === "PICKED_UP" || shipment.status === "DRIVER_ASSIGNED"
+                              ? "bg-blue-100 text-blue-700 border-blue-300"
+                              : shipment.status === "CANCELED"
+                                ? "bg-red-100 text-red-700 border-red-300"
+                                : "bg-yellow-100 text-yellow-700 border-yellow-300"
+                        } ${isCancelled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="ASSIGNING_DRIVER">Assigning Driver</option>
+                        <option value="DRIVER_ASSIGNED">Driver Assigned</option>
+                        <option value="PICKED_UP">Picked Up</option>
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELED">Canceled</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-[oklch(0.45_0_0)]">ETA:</span>
+                      <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium">{shipment.eta}</span>
+                    </div>
+                    <div>
+                      <span className="text-[oklch(0.45_0_0)]">Materials:</span>
+                      <span className="ml-2 text-[oklch(0.18_0.08_250)]">{shipment.materials}</span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[oklch(0.45_0_0)]">Materials:</span>
-                  <span className="ml-2 text-[oklch(0.18_0.08_250)]">{shipment.materials}</span>
-                </div>
-              </div>
-            </div>
-          ))}
+              )
+            })
+          )}
         </div>
       </div>
 
       {/* Add Shipment Modal */}
       {showAddShipmentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Add New Shipment</h2>
               <button
@@ -208,19 +431,42 @@ export default function ShipmentsTab() {
                   value={newShipment.destination}
                   onChange={(e) => setNewShipment({ ...newShipment, destination: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder="e.g., New York, NY"
+                  placeholder="e.g., Santo Tomas, Batangas"
                 />
               </div>
+              
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Materials</label>
-                <input
-                  type="text"
-                  value={newShipment.materials}
-                  onChange={(e) => setNewShipment({ ...newShipment, materials: e.target.value })}
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material</label>
+                <select
+                  value={newShipment.selectedMaterialId}
+                  onChange={(e) => handleMaterialChange(e.target.value)}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder="e.g., Steel Beams, Concrete Mix"
+                >
+                  <option value="">Select a material</option>
+                  {materials.map(material => (
+                    <option key={material.id} value={material.id}>
+                      {material.name} (Available: {material.quantity} {material.unit})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Quantity {selectedMaterial && `(Max: ${maxQuantity} ${selectedMaterial.unit})`}
+                </label>
+                <input
+                  type="number"
+                  value={newShipment.quantity}
+                  onChange={(e) => handleQuantityChange(e.target.value)}
+                  disabled={!newShipment.selectedMaterialId}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  placeholder="Enter quantity (must be positive)"
+                  min="1"
+                  max={maxQuantity}
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">ETA</label>
                 <input
@@ -228,6 +474,17 @@ export default function ShipmentsTab() {
                   value={newShipment.eta}
                   onChange={(e) => setNewShipment({ ...newShipment, eta: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Delivery Address (Optional)</label>
+                <input
+                  type="text"
+                  value={newShipment.deliveryAddress}
+                  onChange={(e) => setNewShipment({ ...newShipment, deliveryAddress: e.target.value })}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  placeholder="Will default to destination if left empty"
                 />
               </div>
             </div>
@@ -265,20 +522,20 @@ export default function ShipmentsTab() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Status</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>All</option>
-                  <option>Pending</option>
-                  <option>In Transit</option>
-                  <option>Delivered</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Date Range</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>All Time</option>
-                  <option>Last 7 days</option>
-                  <option>Last 30 days</option>
-                  <option>Last 3 months</option>
+                <select 
+                  value={selectedStatus}
+                  onChange={(e) => {
+                    handleStatusFilterChange(e.target.value);
+                    setShowFilterShipmentsModal(false);
+                  }}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="ASSIGNING_DRIVER">Assigning Driver</option>
+                  <option value="DRIVER_ASSIGNED">Driver Assigned</option>
+                  <option value="PICKED_UP">Picked Up</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="CANCELED">Canceled</option>
                 </select>
               </div>
             </div>
@@ -287,16 +544,7 @@ export default function ShipmentsTab() {
                 onClick={() => setShowFilterShipmentsModal(false)}
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  alert("Filters applied!")
-                  setShowFilterShipmentsModal(false)
-                }}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                Apply Filters
+                Close
               </button>
             </div>
           </div>
