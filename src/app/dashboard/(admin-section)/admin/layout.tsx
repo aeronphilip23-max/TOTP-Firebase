@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useRouter, usePathname } from "next/navigation"
-import { Package, BarChart3, Box, Settings, Menu, X, Shield } from "lucide-react"
+import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield } from "lucide-react"
 import { useState } from "react"
 import Link from "next/link"
 

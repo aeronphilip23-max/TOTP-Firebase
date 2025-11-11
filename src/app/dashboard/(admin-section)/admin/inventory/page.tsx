@@ -1,15 +1,58 @@
 "use client"
 
-import { Package, Plus, Search, Filter, X } from "lucide-react"
+import { Package, Plus, Search, Filter, X, Minus } from "lucide-react"
 import { useState, useEffect } from "react"
 
 import { db } from "@/src/lib/firebase"
 
-import { collection, getDocs, doc, setDoc } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, updateDoc } from "firebase/firestore";
+
+const UNIT_MEASUREMENTS = [
+  "units",
+  "kg",
+  "g",
+  "lbs",
+  "oz",
+  "liters",
+  "ml",
+  "gallons",
+  "cubic meters",
+  "cubic feet",
+  "meters",
+  "feet",
+  "inches",
+  "cm",
+  "mm",
+  "tons",
+  "boxes",
+  "pallets",
+  "rolls",
+  "sheets",
+  "pieces",
+]
+
+const CATEGORIES = [
+  "Structural",
+  "Building Materials",
+  "Electrical",
+  "Plumbing",
+  "Safety Equipment",
+  "Tools",
+  "Other",
+]
+
+const STOCK_LEVELS = {
+  "Low Stock": (qty: number) => qty < 10,
+  "In Stock": (qty: number) => qty >= 10 && qty <= 100,
+}
 
 export default function InventoryTab() {
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
   const [showFilterInventoryModal, setShowFilterInventoryModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedCategory, setSelectedCategory] = useState("All Categories")
+  const [selectedStockLevel, setSelectedStockLevel] = useState("All")
+
   const [newMaterial, setNewMaterial] = useState({
     name: "",
     category: "",
@@ -27,10 +70,19 @@ export default function InventoryTab() {
     location?: string
   }>>([])
 
+  const [allMaterials, setAllMaterials] = useState<Array<{
+    id?: string
+    name?: string
+    category?: string
+    quantity?: number
+    unit?: string
+    location?: string
+  }>>([])
+
   const getMaterials = async () => {
     const querySnapshot = await getDocs(collection(db, "inventory"));
     const materialsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
+    setAllMaterials(materialsList);
     setMaterials(materialsList);
   }
 
@@ -38,13 +90,44 @@ export default function InventoryTab() {
     getMaterials();
   }, []);
 
+  const applyFilters = (query: string = searchQuery, category: string = selectedCategory, stockLevel: string = selectedStockLevel) => {
+    let filtered = allMaterials;
+
+    if (query) {
+      filtered = filtered.filter(m =>
+        m.id?.toLowerCase().includes(query.toLowerCase()) ||
+        m.name?.toLowerCase().includes(query.toLowerCase()) ||
+        m.category?.toLowerCase().includes(query.toLowerCase())
+      );
+    }
+
+    if (category !== "All Categories") {
+      filtered = filtered.filter(m => m.category === category);
+    }
+
+    if (stockLevel !== "All") {
+      filtered = filtered.filter(m => {
+        const checker = STOCK_LEVELS[stockLevel as keyof typeof STOCK_LEVELS];
+        return checker ? checker(m.quantity || 0) : true;
+      });
+    }
+
+    setMaterials(filtered);
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applyFilters(query, selectedCategory, selectedStockLevel);
+  }
+
   const handleAddMaterial = async () => {
     if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
       alert("Please fill in all fields")
       return
     }
     const material = {
-      id: `MAT-${String(materials.length + 1).padStart(4, "0")}`,
+      id: `MAT-${String(allMaterials.length + 1).padStart(4, "0")}`,
       name: newMaterial.name,
       category: newMaterial.category,
       quantity: Number.parseInt(newMaterial.quantity),
@@ -60,9 +143,78 @@ export default function InventoryTab() {
       location: material.location,
     });
 
-    setMaterials([...materials, material])
+    const updated = [...allMaterials, material];
+    setAllMaterials(updated);
+    applyFilters(searchQuery, selectedCategory, selectedStockLevel);
     setShowAddMaterialModal(false)
     setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+  }
+
+  // Replace updateQuantity with prompt-based amount input
+  const promptAndUpdateQuantity = async (materialId: string | undefined, isAdd: boolean) => {
+    if (!materialId) return;
+
+    // ask user for amount
+    const action = isAdd ? "add" : "deduct";
+    const input = window.prompt(`Enter amount to ${action}:`, "1");
+    if (input === null) return; // user cancelled
+
+    const amount = parseInt(input.trim(), 10);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert("Please enter a valid positive number");
+      return;
+    }
+
+    try {
+      const material = allMaterials.find(m => m.id === materialId);
+      if (!material) {
+        alert("Material not found");
+        return;
+      }
+
+      const newQuantity = Math.max(0, (material.quantity || 0) + (isAdd ? amount : -amount));
+
+      await updateDoc(doc(db, "inventory", materialId), {
+        quantity: newQuantity,
+      });
+
+      // Update both allMaterials and materials to refresh UI
+      const updatedAll = allMaterials.map(m =>
+        m.id === materialId ? { ...m, quantity: newQuantity } : m
+      );
+      setAllMaterials(updatedAll);
+      
+      // Re-apply filters to refresh the displayed list
+      setMaterials(updatedAll.filter(m => {
+        let passes = true;
+        
+        if (searchQuery) {
+          passes = (m.id?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
+                   (m.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
+                   (m.category?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+        }
+        
+        if (selectedCategory !== "All Categories") {
+          passes = passes && m.category === selectedCategory;
+        }
+        
+        if (selectedStockLevel !== "All") {
+          const checker = STOCK_LEVELS[selectedStockLevel as keyof typeof STOCK_LEVELS];
+          passes = passes && (checker ? checker(m.quantity || 0) : true);
+        }
+        
+        return passes;
+      }));
+    } catch (err: any) {
+      console.error("Failed to update quantity:", err);
+      alert("Failed to update quantity: " + (err?.message || String(err)));
+    }
+  }
+
+  const getStockLevelBadge = (quantity: number | undefined) => {
+    if (!quantity) return null;
+    if (quantity < 10) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
+    if (quantity <= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
   }
 
   return (
@@ -84,7 +236,9 @@ export default function InventoryTab() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[oklch(0.45_0_0)]" />
             <input
               type="text"
-              placeholder="Search materials..."
+              placeholder="Search by ID, name, or category..."
+              value={searchQuery}
+              onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
             />
           </div>
@@ -93,7 +247,7 @@ export default function InventoryTab() {
             className="flex items-center gap-2 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)]"
           >
             <Filter className="h-5 w-5" />
-            Filter by Category
+            Filter
           </button>
         </div>
 
@@ -105,26 +259,61 @@ export default function InventoryTab() {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Name</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Category</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Quantity</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Stock Level</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Location</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[oklch(0.88_0_0)]">
-              {materials.map((material) => (
-                <tr key={material.id} className="hover:bg-[oklch(0.98_0_0)]">
-                  <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.id}</td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <Package className="h-5 w-5 text-[oklch(0.68_0.19_35)]" />
-                      <span className="font-medium text-[oklch(0.18_0.08_250)]">{material.name}</span>
-                    </div>
+              {materials.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-4 text-center text-[oklch(0.45_0_0)]">
+                    No materials found.
                   </td>
-                  <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.category}</td>
-                  <td className="px-6 py-4 text-sm text-[oklch(0.18_0.08_250)] font-medium">
-                    {material.quantity} {material.unit}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.location}</td>
                 </tr>
-              ))}
+              ) : (
+                materials.map((material) => {
+                  const stockBadge = getStockLevelBadge(material.quantity);
+                  return (
+                    <tr key={material.id} className="hover:bg-[oklch(0.98_0_0)]">
+                      <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.id}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <Package className="h-5 w-5 text-[oklch(0.68_0.19_35)]" />
+                          <span className="font-medium text-[oklch(0.18_0.08_250)]">{material.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.category}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => promptAndUpdateQuantity(material.id, false)}
+                            className="p-1 hover:bg-red-100 rounded transition-colors"
+                          >
+                            <Minus className="h-4 w-4 text-red-600" />
+                          </button>
+                          <span className="font-medium text-[oklch(0.18_0.08_250)] min-w-[40px] text-center">
+                            {material.quantity} {material.unit}
+                          </span>
+                          <button
+                            onClick={() => promptAndUpdateQuantity(material.id, true)}
+                            className="p-1 hover:bg-green-100 rounded transition-colors"
+                          >
+                            <Plus className="h-4 w-4 text-green-600" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        {stockBadge && (
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${stockBadge.color}`}>
+                            {stockBadge.label}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.location}</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -162,10 +351,9 @@ export default function InventoryTab() {
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 >
                   <option value="">Select category</option>
-                  <option>Structural</option>
-                  <option>Building Materials</option>
-                  <option>Electrical</option>
-                  <option>Plumbing</option>
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -181,13 +369,16 @@ export default function InventoryTab() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
-                  <input
-                    type="text"
+                  <select
                     value={newMaterial.unit}
                     onChange={(e) => setNewMaterial({ ...newMaterial, unit: e.target.value })}
                     className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                    placeholder="e.g., units, kg"
-                  />
+                  >
+                    <option value="">Select unit</option>
+                    {UNIT_MEASUREMENTS.map(unit => (
+                      <option key={unit} value={unit}>{unit}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div>
@@ -224,7 +415,7 @@ export default function InventoryTab() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Filter by Category</h2>
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Filter Materials</h2>
               <button
                 onClick={() => setShowFilterInventoryModal(false)}
                 className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
@@ -235,21 +426,34 @@ export default function InventoryTab() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
+                <select 
+                  value={selectedCategory}
+                  onChange={(e) => {
+                    setSelectedCategory(e.target.value);
+                    applyFilters(searchQuery, e.target.value, selectedStockLevel);
+                  }}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
                   <option>All Categories</option>
-                  <option>Structural</option>
-                  <option>Building Materials</option>
-                  <option>Electrical</option>
-                  <option>Plumbing</option>
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Stock Level</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>All</option>
-                  <option>Low Stock</option>
-                  <option>In Stock</option>
-                  <option>Overstocked</option>
+                <select 
+                  value={selectedStockLevel}
+                  onChange={(e) => {
+                    setSelectedStockLevel(e.target.value);
+                    applyFilters(searchQuery, selectedCategory, e.target.value);
+                  }}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="All">All Stock Levels</option>
+                  <option value="Low Stock">Low Stock</option>
+                  <option value="In Stock">In Stock</option>
+                  <option value="Overstocked">Overstocked</option>
                 </select>
               </div>
             </div>
@@ -258,16 +462,7 @@ export default function InventoryTab() {
                 onClick={() => setShowFilterInventoryModal(false)}
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  alert("Filters applied!")
-                  setShowFilterInventoryModal(false)
-                }}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                Apply Filters
+                Close
               </button>
             </div>
           </div>
