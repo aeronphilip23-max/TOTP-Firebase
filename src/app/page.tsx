@@ -17,15 +17,9 @@ export default function LandingPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate.push("/auth/login")}
-            className="px-4 py-2 text-white hover:text-[oklch(0.68_0.19_35)] transition-colors"
-          >
-            Log in
-          </button>
-          <button
-            onClick={() => navigate.push("/auth/login")}
             className="px-6 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium"
           >
-            Get Started
+            Log in
           </button>
         </div>
       </nav>

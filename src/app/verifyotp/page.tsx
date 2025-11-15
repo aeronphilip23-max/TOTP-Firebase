@@ -31,11 +31,26 @@ const VerifyOTP = () => {
   const [totpUri, setTotpUri] = useState("")
   const navigate = useRouter()
 
+  // Function to set cookies (same as login page)
+  const setAuthCookies = async (user: any, role: string = 'user') => {
+    try {
+      const idToken = await user.getIdToken();
+      const cookieOptions = `path=/; max-age=3600; samesite=strict`;
+      
+      document.cookie = `idToken=${idToken}; ${cookieOptions}`;
+      document.cookie = `userRole=${role}; ${cookieOptions}`;
+      
+      console.log("Auth cookies set from VerifyOTP:", { idToken, role });
+    } catch (error) {
+      console.error("Error setting auth cookies:", error);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       if (currentUser) {
         setUser(currentUser)
-        // Get user role from Firestore
+        // Get user role from Firestore and set cookies
         try {
           const db = getFirestore()
           const userDocRef = doc(db, "users", currentUser.uid)
@@ -45,6 +60,9 @@ const VerifyOTP = () => {
             const userData = userDoc.data()
             const role = userData.role || 'user'
             setUserRole(role)
+            
+            // Set cookies here to ensure they're available
+            await setAuthCookies(currentUser, role);
             console.log("User role in VerifyOTP:", role)
           }
         } catch (err) {
@@ -59,8 +77,14 @@ const VerifyOTP = () => {
   }, [navigate])
 
   // Role-based navigation function
-  const navigateBasedOnRole = (role: string) => {
+  const navigateBasedOnRole = async (role: string) => {
     console.log("Navigating based on role from VerifyOTP:", role);
+    
+    // Ensure cookies are set before navigation
+    if (user) {
+      await setAuthCookies(user, role);
+    }
+    
     switch (role) {
       case 'admin':
         navigate.push("/dashboard/admin/dashboard");

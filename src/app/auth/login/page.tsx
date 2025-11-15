@@ -18,14 +18,6 @@ import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
 import { Package, Eye, EyeOff } from "lucide-react"
 
-// UserRole interface
-interface UserRole {
-  role: 'user' | 'admin';
-  firstName?: string;
-  lastName?: string;
-  email: string;
-}
-
 const Login = () => {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -38,35 +30,91 @@ const Login = () => {
   const [showForgotDialog, setShowForgotDialog] = useState(false)
   const [resetEmailValue, setResetEmailValue] = useState("")
   const [resetLoading, setResetLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false) // New state for password visibility
+  const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
 
-  // Role-based navigation function
-  const navigateBasedOnRole = (role: string) => {
-    console.log("Navigating based on role:", role);
-    switch (role) {
-      case 'admin':
-        router.push("/dashboard/admin/dashboard");
-        break;
-      case 'user':
-      default:
-        router.push("/dashboard/staff");  
-        break;
+  // Function to set ID token and user role as cookies for middleware
+  const setAuthCookies = async (user: any, role: string = 'user') => {
+    try {
+      // Get the ID token
+      const idToken = await user.getIdToken();
+      
+      // Set both cookies with proper attributes
+      const cookieOptions = `path=/; max-age=3600; samesite=strict`;
+      
+      document.cookie = `idToken=${idToken}; ${cookieOptions}`;
+      document.cookie = `userRole=${role}; ${cookieOptions}`;
+      
+      console.log("Auth cookies set successfully:", { idToken, role });
+    } catch (error) {
+      console.error("Error setting auth cookies:", error);
     }
   };
 
+  // Get user role and set cookies
+  const getUserRoleAndSetCookies = async (user: any) => {
+    try {
+      const db = getFirestore()
+      const userDocRef = doc(db, "users", user.uid)
+      const userDoc = await getDoc(userDocRef)
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const role = userData.role || 'user'
+        
+        console.log("User role from Firestore:", role)
+        
+        // Set cookies with the role
+        await setAuthCookies(user, role);
+        return role;
+      } else {
+        console.error("No user document found for UID:", user.uid)
+        // Set default role if no document found
+        await setAuthCookies(user, 'user');
+        return 'user';
+      }
+    } catch (error) {
+      console.error("Error getting user role:", error);
+      // Set default role on error
+      await setAuthCookies(user, 'user');
+      return 'user';
+    }
+  };
+
+// In your login page - fix the navigateBasedOnRole function
+// In your login page - update the navigation
+const navigateBasedOnRole = async (role: string) => {
+  console.log("Navigating based on role:", role);
+  
+await new Promise(resolve => setTimeout(resolve, 100));
+
+  switch (role) {
+    case 'admin':
+      router.push("/dashboard/admin/dashboard");
+      break;
+    case 'user':
+    default:
+      router.push("/dashboard/staff");  // All non-admin users go to staff dashboard
+      break;
+  }
+};
+
   // Check if user needs TOTP setup
-  const checkTOTPSetup = async (user: any) => {
+  const checkTOTPSetup = async (user: any): Promise<boolean> => {
     try {
       const enrolledFactors = await multiFactor(user).enrolledFactors;
       const hasTOTP = enrolledFactors.some(factor => factor.factorId === TotpMultiFactorGenerator.FACTOR_ID);
       
-      console.log("TOTP enrolled factors:", enrolledFactors);
       console.log("User has TOTP setup:", hasTOTP);
       
       // If user doesn't have TOTP setup, redirect to setup page
       if (!hasTOTP) {
         console.log("Redirecting to TOTP setup page");
+        
+        // Get user role and set cookies before redirecting
+        const role = await getUserRoleAndSetCookies(user);
+        console.log("Setting cookies for TOTP setup with role:", role);
+        
         router.push("/verifyotp");
         return false;
       }
@@ -74,7 +122,8 @@ const Login = () => {
       return true;
     } catch (error) {
       console.error("Error checking TOTP setup:", error);
-      return true; // If there's an error, assume TOTP is set up to avoid blocking login
+      // If there's an error checking TOTP, proceed with normal login
+      return true;
     }
   };
 
@@ -93,28 +142,12 @@ const Login = () => {
       // Check if user needs TOTP setup
       const hasTOTP = await checkTOTPSetup(user);
       
+      // Only navigate if TOTP is already set up
       if (hasTOTP) {
-        // Get user role from Firestore only if TOTP is already set up
-        const db = getFirestore()
-        const userDocRef = doc(db, "users", user.uid)
-        const userDoc = await getDoc(userDocRef)
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          const role = userData.role || 'user'
-          
-          console.log("User role from Firestore:", role)
-          console.log("User data:", userData)
-          
-          // Navigate based on role
-          navigateBasedOnRole(role)
-        } else {
-          setError("User document not found in database.")
-          console.error("No user document found for UID:", user.uid)
-        }
+        const role = await getUserRoleAndSetCookies(user);
+        navigateBasedOnRole(role);
       }
       // If TOTP is not set up, the user will be redirected to verifyotp page
-      // and the navigation will happen from there after TOTP setup
       
     } catch (err: any) {
       if (err?.code === "auth/multi-factor-auth-required") {
@@ -159,28 +192,12 @@ const Login = () => {
       
       console.log("MFA verification successful! User UID:", user.uid)
       
-      // Check if user needs TOTP setup after MFA verification
+      // After MFA, check TOTP setup and navigate
       const hasTOTP = await checkTOTPSetup(user);
       
       if (hasTOTP) {
-        // Get user role from Firestore after MFA
-        const db = getFirestore()
-        const userDocRef = doc(db, "users", user.uid)
-        const userDoc = await getDoc(userDocRef)
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          const role = userData.role || 'user'
-          
-          console.log("User role from Firestore after MFA:", role)
-          console.log("User data after MFA:", userData)
-          
-          // Navigate based on role
-          navigateBasedOnRole(role)
-        } else {
-          setError("User document not found in database.")
-          console.error("No user document found for UID:", user.uid)
-        }
+        const role = await getUserRoleAndSetCookies(user);
+        navigateBasedOnRole(role);
       }
       
     } catch (err: any) {
@@ -191,6 +208,7 @@ const Login = () => {
     }
   }
 
+  // ... rest of your component remains the same (handleCancelMfa, handleForgotPassword, etc.)
   const handleCancelMfa = () => {
     setMfaRequired(false)
     setMfaResolver(null)

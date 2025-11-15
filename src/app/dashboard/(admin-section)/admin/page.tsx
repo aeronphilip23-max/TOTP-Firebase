@@ -15,7 +15,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<TabType>("shipments")
 
   const tabs = [
-    { id: "shipments" as TabType, name: "Shipments", icon: Package },
+    { id: "shipments" as TabType, name: "Shipments", icon: BarChart3 },
     { id: "inventory" as TabType, name: "Inventory", icon: Box },
     { id: "reports" as TabType, name: "Reports", icon: BarChart3 },
     { id: "calendar" as TabType, name: "Calendar", icon: CalendarIcon },

@@ -2,7 +2,7 @@ import type React from "react";
 import type { Metadata } from "next";
 import { Inter, Roboto_Mono } from "next/font/google";
 import "./globals.css";
-
+import { AuthProvider } from "../context/authcontext";
 
 // npm install geist/font
 
@@ -31,7 +31,9 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${robotoMono.variable} font-sans antialiased`}
       >
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );
