@@ -182,7 +182,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Exclude all API routes from middleware so API handlers can return JSON/errors
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api/|_next/static|_next/image|favicon.ico).*)",
   ],
 };
