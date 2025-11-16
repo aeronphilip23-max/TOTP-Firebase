@@ -43,9 +43,22 @@ export default function ShipmentsPage() {
     const getShipments = async () => {
       const querySnapshot = await getDocs(collection(db, "shipments"));
       const shipmentsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  
-      setAllShipments(shipmentsData as any);
-      setShipments(shipmentsData as any);
+
+      // Ensure shipments are sorted according to current sort settings on initial load
+      const sorted = [...shipmentsData].sort((a: any, b: any) => {
+        if (sortBy === 'id') {
+          const comparison = String(a.id).localeCompare(String(b.id));
+          return sortOrder === 'descending' ? -comparison : comparison;
+        }
+
+        // default to date sorting
+        const dateA = a.eta ? new Date(a.eta).getTime() : 0;
+        const dateB = b.eta ? new Date(b.eta).getTime() : 0;
+        return sortOrder === 'descending' ? dateB - dateA : dateA - dateB;
+      });
+
+      setAllShipments(sorted as any);
+      setShipments(sorted as any);
     }
   
     useEffect(() => {

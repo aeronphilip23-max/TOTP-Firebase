@@ -81,8 +81,21 @@ export default function ShipmentsTab() {
         id: doc.id, 
         ...doc.data() 
       }));
-      setAllShipments(shipmentsData as any);
-      setShipments(shipmentsData as any);
+
+      // Sort initial shipments according to current sort settings
+      const sorted = [...shipmentsData].sort((a: any, b: any) => {
+        if (sortBy === 'id') {
+          const comparison = String(a.id).localeCompare(String(b.id));
+          return sortOrder === 'descending' ? -comparison : comparison;
+        }
+
+        const dateA = a.eta ? new Date(a.eta).getTime() : 0;
+        const dateB = b.eta ? new Date(b.eta).getTime() : 0;
+        return sortOrder === 'descending' ? dateB - dateA : dateA - dateB;
+      });
+
+      setAllShipments(sorted as any);
+      setShipments(sorted as any);
     } catch (error) {
       console.error("Error loading shipments:", error);
       alert("Failed to load shipments");
