@@ -15,9 +15,12 @@ interface Material {
 
 export default function ShipmentsTab() {
   const [showAddShipmentModal, setShowAddShipmentModal] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
   const [showFilterShipmentsModal, setShowFilterShipmentsModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("ALL")
+  const [sortBy, setSortBy] = useState("date")
+  const [sortOrder, setSortOrder] = useState("descending")
   const [materials, setMaterials] = useState<Material[]>([])
 
   const [newShipment, setNewShipment] = useState({
@@ -79,8 +82,21 @@ export default function ShipmentsTab() {
         id: doc.id, 
         ...doc.data() 
       }));
-      setAllShipments(shipmentsData as any);
-      setShipments(shipmentsData as any);
+
+      // Sort initial shipments according to current sort settings
+      const sorted = [...shipmentsData].sort((a: any, b: any) => {
+        if (sortBy === 'id') {
+          const comparison = String(a.id).localeCompare(String(b.id));
+          return sortOrder === 'descending' ? -comparison : comparison;
+        }
+
+        const dateA = a.eta ? new Date(a.eta).getTime() : 0;
+        const dateB = b.eta ? new Date(b.eta).getTime() : 0;
+        return sortOrder === 'descending' ? dateB - dateA : dateA - dateB;
+      });
+
+      setAllShipments(sorted as any);
+      setShipments(sorted as any);
     } catch (error) {
       console.error("Error loading shipments:", error);
       alert("Failed to load shipments");
@@ -92,8 +108,12 @@ export default function ShipmentsTab() {
     getShipments();
   }, [])
 
+  useEffect(() => {
+    applyFilters(searchQuery, selectedStatus, sortBy, sortOrder);
+  }, [allShipments])
+
   // Search and filter logic
-  const applyFilters = (query: string = searchQuery, status: string = selectedStatus) => {
+  const applyFilters = (query: string = searchQuery, status: string = selectedStatus, sort: string = sortBy, order: string = sortOrder) => {
     let filtered = allShipments;
 
     if (query) {
@@ -108,18 +128,42 @@ export default function ShipmentsTab() {
       filtered = filtered.filter(s => s.status === status);
     }
 
+    // Apply sorting
+    if (sort === "id") {
+      filtered.sort((a, b) => {
+        const comparison = a.id.localeCompare(b.id);
+        return order === "descending" ? -comparison : comparison;
+      });
+    } else if (sort === "date") {
+      filtered.sort((a, b) => {
+        const dateA = a.eta ? new Date(a.eta).getTime() : 0;
+        const dateB = b.eta ? new Date(b.eta).getTime() : 0;
+        return order === "descending" ? dateB - dateA : dateA - dateB;
+      });
+    }
+
     setShipments(filtered);
   }
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
     setSearchQuery(query);
-    applyFilters(query, selectedStatus);
+    applyFilters(query, selectedStatus, sortBy, sortOrder);
   }
 
   const handleStatusFilterChange = (status: string) => {
     setSelectedStatus(status);
-    applyFilters(searchQuery, status);
+    applyFilters(searchQuery, status, sortBy, sortOrder);
+  }
+
+  const handleSortByChange = (sort: string) => {
+    setSortBy(sort);
+    applyFilters(searchQuery, selectedStatus, sort, sortOrder);
+  }
+
+  const handleSortOrderChange = (order: string) => {
+    setSortOrder(order);
+    applyFilters(searchQuery, selectedStatus, sortBy, order);
   }
 
   const getSelectedMaterial = () => {
@@ -177,6 +221,7 @@ export default function ShipmentsTab() {
     }
 
     try {
+      setIsCreating(true)
       const pickupLat = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LAT || '0');
       const pickupLng = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LNG || '0');
       const pickupAddress = process.env.NEXT_PUBLIC_WAREHOUSE_ADDRESS || "Warehouse";
@@ -207,12 +252,38 @@ export default function ShipmentsTab() {
         })
       });
 
+      // Parse response safely: some errors can return HTML (e.g., 500 page)
+      const contentType = response.headers.get('content-type') || '';
+      const raw = await response.text();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create delivery');
+        // Try to extract JSON error if present
+        let message = raw;
+        if (contentType.includes('application/json')) {
+          try {
+            const errObj = JSON.parse(raw);
+            message = errObj.error || errObj.message || JSON.stringify(errObj);
+          } catch (e) {
+            // fallthrough to raw
+          }
+        }
+        throw new Error(message || 'Failed to create delivery');
       }
 
-      const lalamoveResp = await response.json();
+      // If response is JSON parse it, else show useful error with snippet
+      let lalamoveResp: any = null;
+      if (contentType.includes('application/json')) {
+        try {
+          lalamoveResp = JSON.parse(raw);
+        } catch (e) {
+          throw new Error('Invalid JSON response from Lalamove API');
+        }
+      } else {
+        // Got HTML or plain text instead of JSON
+        const snippet = raw.slice(0, 1000);
+        throw new Error('Unexpected response from Lalamove API: ' + snippet);
+      }
+
       const lalamoveOrderId = lalamoveResp?.id || lalamoveResp?.orderId || null;
 
       // Deduct from inventory
@@ -252,6 +323,8 @@ export default function ShipmentsTab() {
     } catch (error: any) {
       console.error("Error creating shipment:", error);
       alert(error.message || "Failed to create shipment");
+    } finally {
+      setIsCreating(false)
     }
   }
 
@@ -307,6 +380,18 @@ export default function ShipmentsTab() {
       console.error("Failed to update status:", err);
       alert("Failed to update status: " + (err?.message || String(err)));
     }
+  }
+
+  // Confirmation modal state for cancellations
+  const [confirmCancel, setConfirmCancel] = useState<any>({ open: false, shipment: null, newStatus: null });
+
+  const handleStatusChangeWithConfirm = (shipment: any, newStatus: string) => {
+    if (newStatus === 'CANCELED' && shipment.status !== 'CANCELED') {
+      setConfirmCancel({ open: true, shipment, newStatus });
+      return;
+    }
+
+    updateDeliveryStatus(shipment.id, shipment.lalamoveOrderId, newStatus, shipment);
   }
 
   const selectedMaterial = getSelectedMaterial()
@@ -368,12 +453,7 @@ export default function ShipmentsTab() {
                       )} */}
                       <select
                         value={shipment.status ?? 'ASSIGNING_DRIVER'}
-                        onChange={(e) => updateDeliveryStatus(
-                          shipment.id,
-                          shipment.lalamoveOrderId,
-                          e.target.value,
-                          shipment
-                        )}
+                        onChange={(e) => handleStatusChangeWithConfirm(shipment, e.target.value)}
                         disabled={isCancelled}
                         className={`px-3 py-1 rounded-full text-sm font-medium border-2 cursor-pointer ${
                           shipment.status === "COMPLETED"
@@ -401,6 +481,10 @@ export default function ShipmentsTab() {
                     <div>
                       <span className="text-[oklch(0.45_0_0)]">Materials:</span>
                       <span className="ml-2 text-[oklch(0.18_0.08_250)]">{shipment.materials}</span>
+                    </div>
+                    <div>
+                      <span className="text-[oklch(0.45_0_0)]">Lalamove ID:</span>
+                      <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium">{shipment.lalamoveOrderId || 'N/A'}</span>
                     </div>
                   </div>
                 </div>
@@ -473,6 +557,7 @@ export default function ShipmentsTab() {
                   type="date"
                   value={newShipment.eta}
                   onChange={(e) => setNewShipment({ ...newShipment, eta: e.target.value })}
+                  min={new Date().toISOString().split('T')[0]}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -497,9 +582,18 @@ export default function ShipmentsTab() {
               </button>
               <button
                 onClick={handleAddShipment}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+                disabled={isCreating}
+                aria-busy={isCreating}
+                className={`flex-1 px-4 py-2 text-white rounded-lg transition-colors ${isCreating ? 'bg-[oklch(0.56_0.12_35)] cursor-not-allowed' : 'bg-[oklch(0.68_0.19_35)] hover:bg-[oklch(0.72_0.19_35)]'}`}
               >
-                Add Shipment
+                {isCreating ? (
+                  <div className="flex items-center justify-center">
+                    <span className="inline-block h-4 w-4 mr-2 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                    Creating...
+                  </div>
+                ) : (
+                  'Add Shipment'
+                )}
               </button>
             </div>
           </div>
@@ -538,6 +632,28 @@ export default function ShipmentsTab() {
                   <option value="CANCELED">Canceled</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Sort By</label>
+                <select 
+                  value={sortBy}
+                  onChange={(e) => handleSortByChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="date">Date</option>
+                  <option value="id">Shipment ID</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Sort Order</label>
+                <select 
+                  value={sortOrder}
+                  onChange={(e) => handleSortOrderChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="descending">Descending</option>
+                  <option value="ascending">Ascending</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button
@@ -545,6 +661,48 @@ export default function ShipmentsTab() {
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Cancellation Modal */}
+      {confirmCancel?.open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Confirm Cancellation</h2>
+              <button
+                onClick={() => setConfirmCancel({ open: false, shipment: null, newStatus: null })}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-[oklch(0.45_0_0)] mb-6">This action will be permanent and cannot be undone. Do you wish to continue?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmCancel({ open: false, shipment: null, newStatus: null })}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                No
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirmCancel?.shipment && confirmCancel?.newStatus) {
+                    await updateDeliveryStatus(
+                      confirmCancel.shipment.id,
+                      confirmCancel.shipment.lalamoveOrderId,
+                      confirmCancel.newStatus,
+                      confirmCancel.shipment
+                    );
+                  }
+                  setConfirmCancel({ open: false, shipment: null, newStatus: null });
+                }}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+              >
+                Yes
               </button>
             </div>
           </div>

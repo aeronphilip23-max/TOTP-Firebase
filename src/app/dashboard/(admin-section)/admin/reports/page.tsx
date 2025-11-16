@@ -1,15 +1,105 @@
 "use client"
 
-import { BarChart3, X } from "lucide-react"
+import { BarChart3, X, Loader2 } from "lucide-react"
 import { useState } from "react"
+
+function getUniqueTitleWithNumber(title: string, existingReports: any[]): string {
+  const baseTitles = new Map<string, number>();
+  existingReports.forEach(report => {
+    const match = report.name.match(/^(.+?)\s*\(\d+\)?$/);
+    const baseTitle = match ? match[1] : report.name;
+    baseTitles.set(baseTitle, (baseTitles.get(baseTitle) || 0) + 1);
+  });
+  if (baseTitles.has(title)) {
+    return `${title} (${baseTitles.get(title)! + 1})`;
+  }
+  return title;
+}
 
 export default function ReportsTab() {
   const [showGenerateReportModal, setShowGenerateReportModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState("")
+  const [reportTitle, setReportTitle] = useState("")
+  const [selectedDateRange, setSelectedDateRange] = useState("Last 30 days")
+  const [selectedFormat, setSelectedFormat] = useState("CSV")
+  const [isLoading, setIsLoading] = useState(false)
+  const [reportData, setReportData] = useState<any>(null)
+  const [showReportPreview, setShowReportPreview] = useState(false)
+  const [recentReports, setRecentReports] = useState<any[]>([])
 
-  const handleGenerateReport = () => {
-    alert(`Generating ${selectedReportType}...`)
-    setShowGenerateReportModal(false)
+  const handleGenerateReport = async () => {
+    if (!selectedReportType) {
+      alert("Please select a report type")
+      return
+    }
+
+    if (!reportTitle.trim()) {
+      alert("Please enter a report title")
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const response = await fetch("/api/reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reportType: selectedReportType,
+          dateRange: selectedDateRange,
+          format: selectedFormat,
+          reportTitle: reportTitle,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to generate report")
+      }
+
+      if (selectedFormat === "CSV") {
+        // Download CSV directly
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else if (selectedFormat === "PDF") {
+        // Download PDF directly
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      }
+
+      const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
+      const newReport = {
+        name: uniqueTitle,
+        date: new Date().toISOString().split("T")[0],
+        size: "~1.2 MB",
+        type: selectedReportType,
+        format: selectedFormat,
+      };
+      setRecentReports(prevReports => {
+        const updated = [newReport, ...prevReports];
+        return updated.slice(0, 5);
+      });
+
+      setShowGenerateReportModal(false)
+    } catch (error: any) {
+      console.error("Error generating report:", error)
+      alert(`Error: ${error.message}`)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -35,6 +125,7 @@ export default function ReportsTab() {
               <button
                 onClick={() => {
                   setSelectedReportType(report.title)
+                  setReportTitle("")
                   setShowGenerateReportModal(true)
                 }}
                 className="w-full px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
@@ -70,21 +161,37 @@ export default function ReportsTab() {
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Report Title *</label>
+                <input
+                  type="text"
+                  value={reportTitle}
+                  onChange={(e) => setReportTitle(e.target.value)}
+                  placeholder="Enter a name for this report"
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Date Range</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
+                <select 
+                  value={selectedDateRange}
+                  onChange={(e) => setSelectedDateRange(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
                   <option>Last 7 days</option>
                   <option>Last 30 days</option>
                   <option>Last 3 months</option>
                   <option>Last year</option>
-                  <option>Custom range</option>
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Format</label>
-                <select className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]">
-                  <option>PDF</option>
-                  <option>Excel</option>
-                  <option>CSV</option>
+                <select 
+                  value={selectedFormat}
+                  onChange={(e) => setSelectedFormat(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="CSV">CSV</option>
+                  <option value="PDF">PDF</option>
                 </select>
               </div>
             </div>
@@ -97,9 +204,61 @@ export default function ReportsTab() {
               </button>
               <button
                 onClick={handleGenerateReport}
+                disabled={isLoading}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                {isLoading ? "Generating..." : "Generate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Preview Modal */}
+      {showReportPreview && reportData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">{reportData.reportType} Preview</h2>
+              <button
+                onClick={() => {
+                  setShowReportPreview(false)
+                  setReportData(null)
+                }}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <pre className="bg-[oklch(0.96_0_0)] p-4 rounded-lg overflow-x-auto text-sm text-[oklch(0.18_0.08_250)] whitespace-pre-wrap break-words">
+                {JSON.stringify(reportData.data, null, 2)}
+              </pre>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowReportPreview(false)
+                  setReportData(null)
+                }}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  const element = document.createElement("a")
+                  const file = new Blob([reportData.csvContent], { type: "text/csv" })
+                  element.href = URL.createObjectURL(file)
+                  element.download = `${reportData.reportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
+                  document.body.appendChild(element)
+                  element.click()
+                  document.body.removeChild(element)
+                }}
                 className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
               >
-                Generate
+                Download as CSV
               </button>
             </div>
           </div>
