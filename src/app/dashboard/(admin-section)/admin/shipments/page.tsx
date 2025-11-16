@@ -18,6 +18,8 @@ export default function ShipmentsTab() {
   const [showFilterShipmentsModal, setShowFilterShipmentsModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("ALL")
+  const [sortBy, setSortBy] = useState("date")
+  const [sortOrder, setSortOrder] = useState("descending")
   const [materials, setMaterials] = useState<Material[]>([])
 
   const [newShipment, setNewShipment] = useState({
@@ -92,8 +94,12 @@ export default function ShipmentsTab() {
     getShipments();
   }, [])
 
+  useEffect(() => {
+    applyFilters(searchQuery, selectedStatus, sortBy, sortOrder);
+  }, [allShipments])
+
   // Search and filter logic
-  const applyFilters = (query: string = searchQuery, status: string = selectedStatus) => {
+  const applyFilters = (query: string = searchQuery, status: string = selectedStatus, sort: string = sortBy, order: string = sortOrder) => {
     let filtered = allShipments;
 
     if (query) {
@@ -108,18 +114,42 @@ export default function ShipmentsTab() {
       filtered = filtered.filter(s => s.status === status);
     }
 
+    // Apply sorting
+    if (sort === "id") {
+      filtered.sort((a, b) => {
+        const comparison = a.id.localeCompare(b.id);
+        return order === "descending" ? -comparison : comparison;
+      });
+    } else if (sort === "date") {
+      filtered.sort((a, b) => {
+        const dateA = a.eta ? new Date(a.eta).getTime() : 0;
+        const dateB = b.eta ? new Date(b.eta).getTime() : 0;
+        return order === "descending" ? dateB - dateA : dateA - dateB;
+      });
+    }
+
     setShipments(filtered);
   }
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
     setSearchQuery(query);
-    applyFilters(query, selectedStatus);
+    applyFilters(query, selectedStatus, sortBy, sortOrder);
   }
 
   const handleStatusFilterChange = (status: string) => {
     setSelectedStatus(status);
-    applyFilters(searchQuery, status);
+    applyFilters(searchQuery, status, sortBy, sortOrder);
+  }
+
+  const handleSortByChange = (sort: string) => {
+    setSortBy(sort);
+    applyFilters(searchQuery, selectedStatus, sort, sortOrder);
+  }
+
+  const handleSortOrderChange = (order: string) => {
+    setSortOrder(order);
+    applyFilters(searchQuery, selectedStatus, sortBy, order);
   }
 
   const getSelectedMaterial = () => {
@@ -402,6 +432,10 @@ export default function ShipmentsTab() {
                       <span className="text-[oklch(0.45_0_0)]">Materials:</span>
                       <span className="ml-2 text-[oklch(0.18_0.08_250)]">{shipment.materials}</span>
                     </div>
+                    <div>
+                      <span className="text-[oklch(0.45_0_0)]">Lalamove ID:</span>
+                      <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium">{shipment.lalamoveOrderId || 'N/A'}</span>
+                    </div>
                   </div>
                 </div>
               )
@@ -473,6 +507,7 @@ export default function ShipmentsTab() {
                   type="date"
                   value={newShipment.eta}
                   onChange={(e) => setNewShipment({ ...newShipment, eta: e.target.value })}
+                  min={new Date().toISOString().split('T')[0]}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -536,6 +571,28 @@ export default function ShipmentsTab() {
                   <option value="PICKED_UP">Picked Up</option>
                   <option value="COMPLETED">Completed</option>
                   <option value="CANCELED">Canceled</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Sort By</label>
+                <select 
+                  value={sortBy}
+                  onChange={(e) => handleSortByChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="date">Date</option>
+                  <option value="id">Shipment ID</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Sort Order</label>
+                <select 
+                  value={sortOrder}
+                  onChange={(e) => handleSortOrderChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="descending">Descending</option>
+                  <option value="ascending">Ascending</option>
                 </select>
               </div>
             </div>

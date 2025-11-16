@@ -49,6 +49,9 @@ const STOCK_LEVELS = {
 export default function InventoryTab() {
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
   const [showFilterInventoryModal, setShowFilterInventoryModal] = useState(false)
+  const [showQuantityModal, setShowQuantityModal] = useState(false)
+  const [quantityInput, setQuantityInput] = useState("")
+  const [quantityAction, setQuantityAction] = useState<{ materialId: string; isAdd: boolean } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All Categories")
   const [selectedStockLevel, setSelectedStockLevel] = useState("All")
@@ -153,63 +156,68 @@ export default function InventoryTab() {
   }
 
   // Replace updateQuantity with prompt-based amount input
-  const promptAndUpdateQuantity = async (materialId: string | undefined, isAdd: boolean) => {
-    if (!materialId) return;
+  const openQuantityModal = (materialId: string, isAdd: boolean) => {
+    setQuantityAction({ materialId, isAdd })
+    setQuantityInput("")
+    setShowQuantityModal(true)
+  }
 
-    // ask user for amount
-    const action = isAdd ? "add" : "deduct";
-    const input = window.prompt(`Enter amount to ${action}:`, "1");
-    if (input === null) return; // user cancelled
+  const handleConfirmQuantity = async () => {
+    if (!quantityAction) return
 
-    const amount = parseInt(input.trim(), 10);
+    const amount = parseInt(quantityInput.trim(), 10)
     if (!Number.isFinite(amount) || amount <= 0) {
-      alert("Please enter a valid positive number");
-      return;
+      alert("Please enter a valid positive number")
+      return
     }
 
     try {
-      const material = allMaterials.find(m => m.id === materialId);
+      const material = allMaterials.find(m => m.id === quantityAction.materialId)
       if (!material) {
-        alert("Material not found");
-        return;
+        alert("Material not found")
+        return
       }
 
-      const newQuantity = Math.max(0, (material.quantity || 0) + (isAdd ? amount : -amount));
+      const newQuantity = Math.max(0, (material.quantity || 0) + (quantityAction.isAdd ? amount : -amount))
 
-      await updateDoc(doc(db, "inventory", materialId), {
+      await updateDoc(doc(db, "inventory", quantityAction.materialId), {
         quantity: newQuantity,
-      });
+      })
 
       // Update both allMaterials and materials to refresh UI
       const updatedAll = allMaterials.map(m =>
-        m.id === materialId ? { ...m, quantity: newQuantity } : m
-      );
-      setAllMaterials(updatedAll);
+        m.id === quantityAction.materialId ? { ...m, quantity: newQuantity } : m
+      )
+      setAllMaterials(updatedAll)
       
       // Re-apply filters to refresh the displayed list
       setMaterials(updatedAll.filter(m => {
-        let passes = true;
+        let passes = true
         
         if (searchQuery) {
           passes = (m.id?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
                    (m.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-                   (m.category?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+                   (m.category?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
         }
         
         if (selectedCategory !== "All Categories") {
-          passes = passes && m.category === selectedCategory;
+          passes = passes && m.category === selectedCategory
         }
         
         if (selectedStockLevel !== "All") {
-          const checker = STOCK_LEVELS[selectedStockLevel as keyof typeof STOCK_LEVELS];
-          passes = passes && (checker ? checker(m.quantity || 0) : true);
+          const checker = STOCK_LEVELS[selectedStockLevel as keyof typeof STOCK_LEVELS]
+          passes = passes && (checker ? checker(m.quantity || 0) : true)
         }
         
-        return passes;
-      }));
+        return passes
+      }))
+
+      setShowQuantityModal(false)
+      setQuantityInput("")
+      setQuantityAction(null)
     } catch (err: any) {
-      console.error("Failed to update quantity:", err);
-      alert("Failed to update quantity: " + (err?.message || String(err)));
+      console.error("Failed to update quantity:", err)
+      alert("Failed to update quantity: " + (err?.message || String(err)))
     }
   }
 
@@ -288,7 +296,7 @@ export default function InventoryTab() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => promptAndUpdateQuantity(material.id, false)}
+                            onClick={() => material.id && openQuantityModal(material.id, false)}
                             className="p-1 hover:bg-red-100 rounded transition-colors"
                           >
                             <Minus className="h-4 w-4 text-red-600" />
@@ -297,7 +305,7 @@ export default function InventoryTab() {
                             {material.quantity} {material.unit}
                           </span>
                           <button
-                            onClick={() => promptAndUpdateQuantity(material.id, true)}
+                            onClick={() => material.id && openQuantityModal(material.id, true)}
                             className="p-1 hover:bg-green-100 rounded transition-colors"
                           >
                             <Plus className="h-4 w-4 text-green-600" />
@@ -464,6 +472,87 @@ export default function InventoryTab() {
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quantity Modal */}
+      {showQuantityModal && quantityAction && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">
+                {quantityAction.isAdd ? "Add" : "Deduct"} Quantity
+              </h2>
+              <button
+                onClick={() => {
+                  setShowQuantityModal(false)
+                  setQuantityInput("")
+                  setQuantityAction(null)
+                }}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Amount {!quantityAction.isAdd && allMaterials.find(m => m.id === quantityAction.materialId) && 
+                    `(Max: ${allMaterials.find(m => m.id === quantityAction.materialId)?.quantity})`}
+                </label>
+                <input
+                  type="number"
+                  value={quantityInput}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === "") {
+                      setQuantityInput("");
+                      return;
+                    }
+                    const numValue = parseInt(value, 10);
+                    if (!isNaN(numValue) && numValue > 0) {
+                      if (quantityAction.isAdd) {
+                        // For add: allow up to 10000
+                        if (numValue <= 10000) {
+                          setQuantityInput(value);
+                        }
+                      } else {
+                        // For deduct: allow up to current quantity
+                        const material = allMaterials.find(m => m.id === quantityAction.materialId);
+                        const maxQuantity = material?.quantity || 0;
+                        if (numValue <= maxQuantity) {
+                          setQuantityInput(value);
+                        }
+                      }
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  placeholder={quantityAction.isAdd ? "Max: 10000" : "Enter amount"}
+                  min="1"
+                  max={quantityAction.isAdd ? 10000 : allMaterials.find(m => m.id === quantityAction.materialId)?.quantity}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowQuantityModal(false)
+                  setQuantityInput("")
+                  setQuantityAction(null)
+                }}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmQuantity}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+              >
+                Confirm
               </button>
             </div>
           </div>
