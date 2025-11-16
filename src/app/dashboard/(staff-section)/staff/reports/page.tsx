@@ -5,6 +5,19 @@ import { useState, useEffect } from "react"
 import { db } from "@/src/lib/firebase"
 import { collection, getDocs, query, orderBy, limit, deleteDoc, doc } from "firebase/firestore"
 
+function getUniqueTitleWithNumber(title: string, existingReports: any[]): string {
+  const baseTitles = new Map<string, number>();
+  existingReports.forEach(report => {
+    const match = report.name.match(/^(.+?)\s*\(\d+\)?$/);
+    const baseTitle = match ? match[1] : report.name;
+    baseTitles.set(baseTitle, (baseTitles.get(baseTitle) || 0) + 1);
+  });
+  if (baseTitles.has(title)) {
+    return `${title} (${baseTitles.get(title)! + 1})`;
+  }
+  return title;
+}
+
 export default function ReportsPage() {
   const [showGenerateModal, setShowGenerateModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState("")
@@ -14,11 +27,7 @@ export default function ReportsPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [reportData, setReportData] = useState<any>(null)
   const [showReportPreview, setShowReportPreview] = useState(false)
-  const [recentReports, setRecentReports] = useState<any[]>([
-    { id: "1", name: "Q4 Shipment Analysis", date: "2024-01-10", size: "2.4 MB", type: "Shipment Analysis" },
-    { id: "2", name: "December Inventory", date: "2024-01-05", size: "1.8 MB", type: "Inventory Report" },
-    { id: "3", name: "Delayed Shipments Dec", date: "2024-01-03", size: "890 KB", type: "Delayed Shipments" },
-  ])
+  const [recentReports, setRecentReports] = useState<any[]>([])
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null)
   const [showDownloadModal, setShowDownloadModal] = useState(false)
   const [selectedDownloadReport, setSelectedDownloadReport] = useState<any>(null)
@@ -101,9 +110,10 @@ export default function ReportsPage() {
         throw new Error(error.error || "Failed to generate report")
       }
 
-      // Add to recent reports from Firestore
+      // Add to recent reports from Firestore with duplicate title handling
+      const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
       const newReport = {
-        name: reportTitle,
+        name: uniqueTitle,
         date: new Date().toISOString().split("T")[0],
         size: "~1.2 MB",
         type: selectedReportType,

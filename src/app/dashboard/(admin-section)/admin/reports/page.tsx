@@ -3,6 +3,19 @@
 import { BarChart3, X, Loader2 } from "lucide-react"
 import { useState } from "react"
 
+function getUniqueTitleWithNumber(title: string, existingReports: any[]): string {
+  const baseTitles = new Map<string, number>();
+  existingReports.forEach(report => {
+    const match = report.name.match(/^(.+?)\s*\(\d+\)?$/);
+    const baseTitle = match ? match[1] : report.name;
+    baseTitles.set(baseTitle, (baseTitles.get(baseTitle) || 0) + 1);
+  });
+  if (baseTitles.has(title)) {
+    return `${title} (${baseTitles.get(title)! + 1})`;
+  }
+  return title;
+}
+
 export default function ReportsTab() {
   const [showGenerateReportModal, setShowGenerateReportModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState("")
@@ -12,6 +25,7 @@ export default function ReportsTab() {
   const [isLoading, setIsLoading] = useState(false)
   const [reportData, setReportData] = useState<any>(null)
   const [showReportPreview, setShowReportPreview] = useState(false)
+  const [recentReports, setRecentReports] = useState<any[]>([])
 
   const handleGenerateReport = async () => {
     if (!selectedReportType) {
@@ -65,6 +79,19 @@ export default function ReportsTab() {
         window.URL.revokeObjectURL(url)
         document.body.removeChild(a)
       }
+
+      const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
+      const newReport = {
+        name: uniqueTitle,
+        date: new Date().toISOString().split("T")[0],
+        size: "~1.2 MB",
+        type: selectedReportType,
+        format: selectedFormat,
+      };
+      setRecentReports(prevReports => {
+        const updated = [newReport, ...prevReports];
+        return updated.slice(0, 5);
+      });
 
       setShowGenerateReportModal(false)
     } catch (error: any) {
