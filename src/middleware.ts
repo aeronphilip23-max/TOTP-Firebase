@@ -1,4 +1,3 @@
-// middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -18,7 +17,6 @@ function checkRateLimit(ip: string): { allowed: boolean; remaining: number } {
   }
 
   const clientData = rateLimitMap.get(ip) || { count: 0, lastReset: now };
-
   if (clientData.lastReset < windowStart) {
     clientData.count = 0;
     clientData.lastReset = now;
@@ -26,7 +24,6 @@ function checkRateLimit(ip: string): { allowed: boolean; remaining: number } {
 
   clientData.count++;
   rateLimitMap.set(ip, clientData);
-
   const remaining = Math.max(0, MAX_REQUESTS_PER_WINDOW - clientData.count);
 
   return {
@@ -50,7 +47,25 @@ function getClientIP(request: NextRequest): string {
   return 'unknown';
 }
 
-// Simple auth check
+// PATH TRAVERSAL PROTECTION
+function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPath: string } {
+  let cleanPath = pathname
+    .replace(/\.\.\//g, '')
+    .replace(/\.\.\\/g, '')
+    .replace(/\/+/g, '/')
+    .replace(/[<>]/g, '')
+    .replace(/\/$/, '');
+
+  const hasTraversal = /\.\.|%2e%2e|%2E%2E|\\|\.\.$/i.test(cleanPath);
+  
+  if (hasTraversal || !cleanPath.startsWith('/')) {
+    return { isValid: false, cleanPath: '/' };
+  }
+
+  return { isValid: true, cleanPath };
+}
+
+// Enhanced auth check
 async function checkAuth(request: NextRequest) {
   try {
     const cookieHeader = request.headers.get('cookie');
@@ -61,7 +76,7 @@ async function checkAuth(request: NextRequest) {
 
     const cookies = cookieHeader.split(';');
     let idToken: string | null = null;
-    let userRole: string = 'user'; // Default role
+    let userRole: string = 'user';
 
     for (const cookie of cookies) {
       const [name, value] = cookie.trim().split('=');
@@ -111,15 +126,31 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  // Public paths (no auth required)
+  // PATH TRAVERSAL PROTECTION
+  const pathValidation = sanitizeAndValidatePath(pathname);
+  if (!pathValidation.isValid) {
+    console.log(`Blocked malicious path: ${pathname} -> ${pathValidation.cleanPath}`);
+    return NextResponse.redirect(new URL('/landingpage', request.url));
+  }
+
+  const cleanPathname = pathValidation.cleanPath;
+
+  // CRITICAL: Landing page and ALL public paths
   const publicPaths = [
-    "/auth/login",
-    "/auth/register", 
+    "/",
+    "/landingpage", // LANDING PAGE - MUST BE FIRST
+    "/auth/login",, 
     "/verifyotp",
-    "/api/auth",
+    
   ];
 
-  if (publicPaths.some((path) => pathname.startsWith(path))) {
+  // Check if it's a public path - SIMPLIFIED LOGIC
+  const isPublicPath = publicPaths.some((path) => 
+    cleanPathname === path || cleanPathname.startsWith(path + '/')
+  );
+
+  if (isPublicPath) {
+    console.log(`✅ Allowing access to public route: ${cleanPathname}`);
     const response = NextResponse.next();
     response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
     response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
@@ -128,16 +159,22 @@ export async function middleware(request: NextRequest) {
 
   // Check authentication for protected routes
   const auth = await checkAuth(request);
-  
+    
   if (!auth) {
-    console.log('No auth found, redirecting to login');
-    return NextResponse.redirect(new URL("/auth/login", request.url));
+    console.log('No auth found, redirecting to landing page from:', cleanPathname);
+    
+    // Don't redirect if user is already trying to access a public page
+    if (cleanPathname === "/landingpage" || cleanPathname === "/" || cleanPathname.startsWith("/auth/")) {
+      return NextResponse.next();
+    }
+    
+    // Redirect to landing page instead of login
+    return NextResponse.redirect(new URL("/landingpage", request.url));
   }
 
-  // Basic role checking
+  // Basic role checking with CLEAN pathname
   const userRole = auth.role;
 
-  // FIXED: Use consistent role names (all lowercase)
   const roleAccessPatterns = {
     admin: [
       "/dashboard/admin",
@@ -149,7 +186,7 @@ export async function middleware(request: NextRequest) {
       "/dashboard/admin/settings",
       "/dashboard/admin/shipments",
     ],
-    user: [ // FIXED: Changed from "User" to "user"
+    user: [
       "/dashboard/staff",
       "/dashboard/staff/calendar",
       "/dashboard/staff/shipments",
@@ -160,15 +197,19 @@ export async function middleware(request: NextRequest) {
   };
 
   const allowedPaths = roleAccessPatterns[userRole as keyof typeof roleAccessPatterns] || [];
-  const hasAccess = allowedPaths.some((path) => pathname.startsWith(path));
+  
+  const hasAccess = allowedPaths.some((allowedPath) => {
+    if (cleanPathname === allowedPath) return true;
+    if (cleanPathname.startsWith(allowedPath + '/')) return true;
+    return false;
+  });
 
   if (!hasAccess) {
-    console.log(`Access denied for role ${userRole} to ${pathname}`);
+    console.log(`Access denied for role ${userRole} to ${cleanPathname}`);
     
-    // FIXED: Consistent role-based redirects
-    let defaultPage = '/dashboard';
+    let defaultPage = '/dashboard/staff';
     if (userRole === 'admin') defaultPage = '/dashboard/admin/dashboard';
-    if (userRole === 'user') defaultPage = '/dashboard/staff'; // Treat 'user' as staff
+    if (userRole === 'user') defaultPage = '/dashboard/staff';
     
     console.log(`Redirecting to: ${defaultPage}`);
     return NextResponse.redirect(new URL(defaultPage, request.url));

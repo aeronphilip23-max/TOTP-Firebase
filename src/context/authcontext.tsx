@@ -141,13 +141,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Redirect to login page
       if (typeof window !== 'undefined') {
-        window.location.href = '/auth/login';
+        window.location.href = '/landingpage';
       }
       
     } catch (error) {
       console.error('Logout error:', error);
       if (typeof window !== 'undefined') {
-        window.location.href = '/auth/login';
+        window.location.href = '/landingpage';
       }
     }
   };

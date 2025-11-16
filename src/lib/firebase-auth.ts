@@ -1,10 +1,10 @@
-// lib/firebase-auth.ts
+// lib/firebase-auth.ts - USING YOUR CONFIG
 import { cookies } from 'next/headers';
+import { baseUrl } from '../lib/config'; // Adjust import path as needed
 
 export async function getFirebaseUser() {
   try {
-    // Get the session cookie using proper Next.js cookies API - ADD AWAIT
-    const cookieStore = await cookies(); // ADD AWAIT HERE
+    const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('session')?.value;
     const idTokenCookie = cookieStore.get('idToken')?.value;
 
@@ -12,21 +12,22 @@ export async function getFirebaseUser() {
       return null;
     }
 
-    // Use the token to verify with our API route
     const tokenToVerify = idTokenCookie || sessionCookie;
     
     if (!tokenToVerify) {
       return null;
     }
 
-    // Verify the token using our API route
-    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
-    const verifyResponse = await fetch(`${baseUrl}/api/auth/verify`, {
+    // ✅ Using your centralized config
+    const apiUrl = `${baseUrl}/api/auth/verify`;
+    
+    const verifyResponse = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ idToken: tokenToVerify }),
+      cache: 'no-store', // Important for auth calls
     });
 
     if (verifyResponse.ok) {
@@ -41,10 +42,9 @@ export async function getFirebaseUser() {
   }
 }
 
-// Alternative simple session checker (if you don't need full user data)
 export async function checkFirebaseAuth() {
   try {
-    const cookieStore = await cookies(); // ADD AWAIT HERE
+    const cookieStore = await cookies();
     const idToken = cookieStore.get('idToken')?.value;
     
     return {

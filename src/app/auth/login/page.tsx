@@ -13,10 +13,11 @@ import {
   type MultiFactorError,
   sendPasswordResetEmail,
   multiFactor,
+  signOut,
 } from "firebase/auth"
 import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
-import { Package, Eye, EyeOff } from "lucide-react"
+import { Package, Eye, EyeOff, ArrowLeft } from "lucide-react"
 
 const Login = () => {
   const [email, setEmail] = useState("")
@@ -31,6 +32,7 @@ const Login = () => {
   const [resetEmailValue, setResetEmailValue] = useState("")
   const [resetLoading, setResetLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
   const router = useRouter()
 
   // Function to set ID token and user role as cookies for middleware
@@ -81,23 +83,22 @@ const Login = () => {
     }
   };
 
-// In your login page - fix the navigateBasedOnRole function
-// In your login page - update the navigation
-const navigateBasedOnRole = async (role: string) => {
-  console.log("Navigating based on role:", role);
-  
-await new Promise(resolve => setTimeout(resolve, 100));
+  // In your login page - update the navigation
+  const navigateBasedOnRole = async (role: string) => {
+    console.log("Navigating based on role:", role);
+    
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-  switch (role) {
-    case 'admin':
-      router.push("/dashboard/admin/dashboard");
-      break;
-    case 'user':
-    default:
-      router.push("/dashboard/staff");  // All non-admin users go to staff dashboard
-      break;
-  }
-};
+    switch (role) {
+      case 'admin':
+        router.push("/dashboard/admin/dashboard");
+        break;
+      case 'user':
+      default:
+        router.push("/dashboard/staff");  // All non-admin users go to staff dashboard
+        break;
+    }
+  };
 
   // Check if user needs TOTP setup
   const checkTOTPSetup = async (user: any): Promise<boolean> => {
@@ -208,7 +209,6 @@ await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
-  // ... rest of your component remains the same (handleCancelMfa, handleForgotPassword, etc.)
   const handleCancelMfa = () => {
     setMfaRequired(false)
     setMfaResolver(null)
@@ -253,8 +253,49 @@ await new Promise(resolve => setTimeout(resolve, 100));
     setShowPassword(!showPassword);
   };
 
+  // FIXED BACK TO LANDING PAGE FUNCTION
+const handleBackToLanding = async () => {
+  if (isNavigating) return;
+  
+  console.log("Back button clicked - navigating to landing page");
+  setIsNavigating(true);
+  
+  try {
+    // Clear specific auth cookies
+    document.cookie = "idToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = "userRole=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    
+    // Sign out from Firebase (non-blocking)
+    signOut(auth).catch(console.error);
+    
+    // Clear storage
+    localStorage.clear();
+    sessionStorage.clear();
+    
+    console.log("Cleared auth data, redirecting...");
+    
+    // Navigate to landing page - either will work now
+    window.location.href = "/landingpage";
+    // OR: window.location.href = "/"; (both will work)
+    
+  } catch (error) {
+    console.error("Error during back to home:", error);
+    window.location.href = "/landingpage";
+  }
+};
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)] flex items-center justify-center p-6">
+    <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)] flex items-center justify-center p-6 relative">
+      {/* Back Button */}
+      <button
+        onClick={handleBackToLanding}
+        disabled={isNavigating}
+        className="absolute top-6 right-6 flex items-center gap-2 px-4 py-2 text-white bg-[oklch(0.68_0.19_35)] hover:bg-[oklch(0.72_0.19_35)] rounded-lg transition-colors font-medium shadow-lg z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        {isNavigating ? "Loading..." : "Back to Home"}
+      </button>
+
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-8">

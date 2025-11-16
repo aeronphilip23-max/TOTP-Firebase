@@ -1,3 +1,4 @@
+// components/AuthGuard.tsx - FIXED VERSION
 'use client';
 import { useAuth } from '../context/authcontext';
 import { usePathname, useRouter } from 'next/navigation';
@@ -8,6 +9,22 @@ interface AuthGuardProps {
   requiredRole: string;
 }
 
+// Client-side path validation
+function validateClientPath(pathname: string): boolean {
+  const maliciousPatterns = [
+    /\.\./,
+    /\/\//,
+    /[<>]/,
+    /\/$/,
+    /\\/
+  ];
+  
+  return !maliciousPatterns.some(pattern => pattern.test(pathname));
+}
+
+// Public routes that don't require authentication
+const publicRoutes = ['/', '/auth/login', '/auth/register', '/verifyotp'];
+
 export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const { user, userRole, loading, refreshUserRole } = useAuth();
   const router = useRouter();
@@ -15,7 +32,26 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [hasCheckedRole, setHasCheckedRole] = useState(false);
 
+  // Check if current route is public
+  const isPublicRoute = publicRoutes.includes(pathname);
+
+  // CLIENT-SIDE PATH VALIDATION
   useEffect(() => {
+    if (!validateClientPath(pathname)) {
+      console.error(`Blocked malicious client path: ${pathname}`);
+      router.push('/error/security');
+      return;
+    }
+  }, [pathname, router]);
+
+  useEffect(() => {
+    // If it's a public route, don't do any auth checks
+    if (isPublicRoute) {
+      console.log("AuthGuard - Public route, skipping auth checks");
+      setHasCheckedRole(true);
+      return;
+    }
+
     const checkRoleAndRedirect = async () => {
       // Don't proceed if still loading, no user, already checked, or already redirecting
       if (loading || !user || hasCheckedRole || isRedirecting) {
@@ -62,7 +98,7 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     };
 
     checkRoleAndRedirect();
-  }, [user, userRole, requiredRole, loading, isRedirecting, hasCheckedRole, refreshUserRole, router]);
+  }, [user, userRole, requiredRole, loading, isRedirecting, hasCheckedRole, refreshUserRole, router, isPublicRoute]);
 
   // Show loading while checking authentication or redirecting
   if (loading || isRedirecting) {
@@ -74,7 +110,13 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     );
   }
 
-  // Redirect if no user (handled in useEffect but as fallback)
+  // For public routes, always render children
+  if (isPublicRoute) {
+    console.log("AuthGuard - Rendering public route content");
+    return <>{children}</>;
+  }
+
+  // Redirect if no user (only for protected routes)
   if (!user) {
     console.log("AuthGuard - No user, redirecting to login");
     router.push('/auth/login');
