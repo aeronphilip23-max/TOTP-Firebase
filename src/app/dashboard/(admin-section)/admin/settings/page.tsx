@@ -1,11 +1,23 @@
 "use client"
 
 import { User, Lock, UserPlus, X } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useAuth } from "@/src/context/authcontext"
+import { doc, getDoc, updateDoc } from "firebase/firestore"
+import { db } from "@/src/lib/firebase"
+import { useToast } from "@/hooks/use-toast"
 
 export default function SettingsTab() {
+  const { user } = useAuth()
   const [settingsTab, setSettingsTab] = useState<"profile" | "security" | "accounts">("profile")
   const [showCreateAccountModal, setShowCreateAccountModal] = useState(false)
+  const [userProfile, setUserProfile] = useState({
+    fullName: "",
+    gender: "",
+    age: "",
+    email: "",
+    phone: "",
+  })
   const [newAccount, setNewAccount] = useState({
     name: "",
     email: "",
@@ -15,6 +27,80 @@ export default function SettingsTab() {
   const [accountError, setAccountError] = useState("")
   const [accountSuccess, setAccountSuccess] = useState("")
   const [accountLoading, setAccountLoading] = useState(false)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileSuccess, setProfileSuccess] = useState("")
+  const [profileError, setProfileError] = useState("")
+  const { toast } = useToast()
+
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!user) return
+      
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          setUserProfile({
+            fullName: data.name || "",
+            gender: data.gender || "",
+            age: data.age || "",
+            email: data.email || user.email || "",
+            phone: data.phone || "",
+          })
+        } else {
+          setUserProfile(prev => ({
+            ...prev,
+            email: user.email || ""
+          }))
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error)
+      }
+    }
+
+    loadUserProfile()
+  }, [user])
+
+  const handleSaveProfile = async () => {
+    if (!user) {
+      setProfileError("User not authenticated")
+      return
+    }
+
+    setProfileLoading(true)
+    setProfileError("")
+    setProfileSuccess("")
+
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        name: userProfile.fullName,
+        gender: userProfile.gender,
+        age: userProfile.age,
+        email: userProfile.email,
+        phone: userProfile.phone,
+      })
+
+      setProfileSuccess("Profile updated successfully!")
+      toast({
+        title: "Success",
+        description: "Your profile has been updated.",
+      })
+
+      setTimeout(() => {
+        setProfileSuccess("")
+      }, 3000)
+    } catch (error) {
+      console.error('Error updating profile:', error)
+      setProfileError("Failed to update profile. Please try again.")
+      toast({
+        title: "Error",
+        description: "Failed to update profile.",
+        variant: "destructive",
+      })
+    } finally {
+      setProfileLoading(false)
+    }
+  }
 
   const handleCreateAccount = async () => {
     setAccountError("")
@@ -103,7 +189,8 @@ export default function SettingsTab() {
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Full Name</label>
                 <input
                   type="text"
-                  defaultValue="Admin User"
+                  value={userProfile.fullName}
+                  onChange={(e) => setUserProfile({ ...userProfile, fullName: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -111,7 +198,8 @@ export default function SettingsTab() {
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Gender</label>
                 <input
                   type="text"
-                  defaultValue="gender"
+                  value={userProfile.gender}
+                  onChange={(e) => setUserProfile({ ...userProfile, gender: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -119,7 +207,8 @@ export default function SettingsTab() {
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Age</label>
                 <input
                   type="text"
-                  defaultValue="23"
+                  value={userProfile.age}
+                  onChange={(e) => setUserProfile({ ...userProfile, age: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -128,7 +217,8 @@ export default function SettingsTab() {
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Email Address</label>
                 <input
                   type="email"
-                  defaultValue="admin@logitrack.com"
+                  value={userProfile.email}
+                  onChange={(e) => setUserProfile({ ...userProfile, email: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
@@ -136,12 +226,19 @@ export default function SettingsTab() {
                 <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Phone Number</label>
                 <input
                   type="tel"
-                  defaultValue="+1 (555) 123-4567"
+                  value={userProfile.phone}
+                  onChange={(e) => setUserProfile({ ...userProfile, phone: e.target.value })}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
               </div>
-              <button className="px-6 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors">
-                Save Changes
+              {profileError && <p className="text-red-500 text-sm">{profileError}</p>}
+              {profileSuccess && <p className="text-green-600 text-sm">{profileSuccess}</p>}
+              <button 
+                onClick={handleSaveProfile}
+                disabled={profileLoading}
+                className="px-6 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {profileLoading ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>
