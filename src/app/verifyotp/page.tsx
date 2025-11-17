@@ -29,6 +29,7 @@ const VerifyOTP = () => {
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null)
   const [totpCode, setTotpCode] = useState("")
   const [totpUri, setTotpUri] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
   const navigate = useRouter()
 
   // Function to set cookies (same as login page)
@@ -45,6 +46,36 @@ const VerifyOTP = () => {
       console.error("Error setting auth cookies:", error);
     }
   };
+
+  // Auto-start TOTP setup when user arrives
+  const enrollTotpMfa = async (currentUser: User) => {
+    try {
+      const multiFactorSession = await multiFactor(currentUser).getSession()
+      const secret = await TotpMultiFactorGenerator.generateSecret(multiFactorSession)
+      
+      // Check if TOTP is already enrolled
+      const totpInfo = await multiFactor(currentUser).enrolledFactors
+      if (totpInfo.length > 0) {
+        setError("TOTP MFA is already enrolled.")
+        // If already enrolled, redirect to dashboard
+        setTimeout(() => {
+          navigateBasedOnRole(userRole)
+        }, 2000)
+        return
+      }
+
+      const totpUri = secret.generateQrCodeUrl(currentUser.email || "", "LogiTrack OTP")
+
+      setTotpSecret(secret)
+      setTotpUri(totpUri)
+      setError("")
+      setSuccess("Scan the QR code with your authenticator app.")
+    } catch (err) {
+      setError("Error initiating TOTP MFA: " + (err as Error).message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
@@ -64,9 +95,13 @@ const VerifyOTP = () => {
             // Set cookies here to ensure they're available
             await setAuthCookies(currentUser, role);
             console.log("User role in VerifyOTP:", role)
+            
+            // AUTO-START TOTP SETUP
+            await enrollTotpMfa(currentUser)
           }
         } catch (err) {
           console.error("Error fetching user role:", err)
+          setIsLoading(false)
         }
       } else {
         setUser(null)
@@ -95,32 +130,6 @@ const VerifyOTP = () => {
         break;
     }
   };
-
-  const enrollTotpMfa = async () => {
-    if (!user) {
-      setError("No user is signed in.")
-      return
-    }
-
-    try {
-      const multiFactorSession = await multiFactor(user).getSession()
-      const secret = await TotpMultiFactorGenerator.generateSecret(multiFactorSession)
-      const totpInfo = await multiFactor(user).enrolledFactors
-      if (totpInfo.length > 0) {
-        setError("TOTP MFA is already enrolled.")
-        return
-      }
-
-      const totpUri = secret.generateQrCodeUrl(user.email || "", "LogiTrack OTP")
-
-      setTotpSecret(secret)
-      setTotpUri(totpUri)
-      setError("")
-      setSuccess("Scan the QR code with your authenticator app.")
-    } catch (err) {
-      setError("Error initiating TOTP MFA: " + (err as Error).message)
-    }
-  }
 
   const verifyTotpCode = async () => {
     if (!user || !totpSecret || !totpCode) {
@@ -171,13 +180,18 @@ const VerifyOTP = () => {
               </div>
 
               <h2 className="text-2xl font-bold text-[oklch(0.18_0.08_250)] mb-2 text-center">
-                Two-Factor Authentication
+                Setup Two-Factor Authentication
               </h2>
               <p className="text-sm text-[oklch(0.45_0_0)] mb-6 text-center">
-                Welcome, {user.email || "User"}! {userRole === 'admin' ? '(Admin)' : '(User)'} Secure your account with 2FA.
+                Welcome, {user.email || "User"}! {userRole === 'admin' ? '(Admin)' : '(User)'}
               </p>
 
-              {!totpSecret ? (
+              {isLoading ? (
+                <div className="text-center">
+                  <p className="text-[oklch(0.45_0_0)]">Setting up TOTP...</p>
+                </div>
+              ) : !totpSecret ? (
+                // This should rarely show now since we auto-start setup
                 <div className="space-y-4">
                   <div className="bg-[oklch(0.96_0_0)] p-4 rounded-lg">
                     <p className="text-sm text-[oklch(0.45_0_0)]">
@@ -185,7 +199,7 @@ const VerifyOTP = () => {
                     </p>
                   </div>
                   <button
-                    onClick={enrollTotpMfa}
+                    onClick={() => enrollTotpMfa(user)}
                     className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium"
                   >
                     Enable TOTP MFA
@@ -198,6 +212,7 @@ const VerifyOTP = () => {
                   </button>
                 </div>
               ) : (
+                // QR CODE SCANNING SCREEN
                 <div className="space-y-6">
                   <div className="flex justify-center">
                     <div className="bg-white p-4 rounded-lg border-2 border-[oklch(0.88_0_0)]">
@@ -226,13 +241,21 @@ const VerifyOTP = () => {
                     />
                   </div>
 
-                  <button
-                    onClick={verifyTotpCode}
-                    disabled={totpCode.length !== 6}
-                    className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Verify TOTP Code
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleSkip}
+                      className="flex-1 px-4 py-3 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
+                    >
+                      Skip
+                    </button>
+                    <button
+                      onClick={verifyTotpCode}
+                      disabled={totpCode.length !== 6}
+                      className="flex-1 px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Verify & Continue
+                    </button>
+                  </div>
                 </div>
               )}
 

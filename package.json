@@ -99,5 +99,6 @@
   "bugs": {
     "url": "https://github.com/aeronphilip23-max/TOTP-Firebase/issues"
   },
-  "homepage": "https://github.com/aeronphilip23-max/TOTP-Firebase#readme"
+  "homepage": "https://github.com/aeronphilip23-max/TOTP-Firebase#readme",
+  "type": "commonjs"
 }
