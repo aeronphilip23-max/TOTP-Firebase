@@ -18,6 +18,12 @@ import {
 import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
 import { Package, Eye, EyeOff, ArrowLeft } from "lucide-react"
+import { 
+  trackFailedLogin, 
+  checkIPStatus, 
+  resetFailedAttempts, 
+  getClientIP 
+} from '@/src/lib/services/ratelimitservice'
 
 const Login = () => {
   const [email, setEmail] = useState("")
@@ -33,6 +39,9 @@ const Login = () => {
   const [resetLoading, setResetLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [isNavigating, setIsNavigating] = useState(false)
+  const [failedAttempts, setFailedAttempts] = useState(0)
+  const [isIPBlocked, setIsIPBlocked] = useState(false)
+  const [blockUntil, setBlockUntil] = useState<number | null>(null)
   const router = useRouter()
 
   // Function to set ID token and user role as cookies for middleware
@@ -128,86 +137,116 @@ const Login = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    setLoading(true)
-    setError("")
-    setMfaRequired(false)
-
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password)
-      const user = userCredential.user
-      
-      console.log("Logged in! User UID:", user.uid)
-      
-      // Check if user needs TOTP setup
-      const hasTOTP = await checkTOTPSetup(user);
-      
-      // Only navigate if TOTP is already set up
-      if (hasTOTP) {
-        const role = await getUserRoleAndSetCookies(user);
-        navigateBasedOnRole(role);
-      }
-      // If TOTP is not set up, the user will be redirected to verifyotp page
-      
-    } catch (err: any) {
-      if (err?.code === "auth/multi-factor-auth-required") {
-        const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
-        setMfaResolver(mfaResolver)
-        setMfaRequired(true)
-        setError("Multi-factor authentication required. Please enter your TOTP code.")
-      } else {
-        setError(err?.message || "An error occurred during authentication.")
-      }
-    } finally {
-      setLoading(false)
-    }
+  // UPDATED HANDLE SUBMIT WITH BRUTE FORCE PROTECTION
+const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault()
+  
+  // Check rate limit status before attempting login
+  const status = await trackFailedLogin(email); // ← Remove the { ip: clientIP } parameter
+  
+  if (status.isBlocked && status.blockUntil) {
+    setIsIPBlocked(true);
+    setBlockUntil(status.blockUntil);
+    const blockUntilTime = new Date(status.blockUntil);
+    setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
+    return;
   }
 
+  setLoading(true)
+  setError("")
+  setMfaRequired(false)
+
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password)
+    const user = userCredential.user
+    
+    console.log("Logged in! User UID:", user.uid)
+    
+    // Reset failed attempts on successful login
+    await resetFailedAttempts(email); // ← Remove the { ip: clientIP } parameter
+    setFailedAttempts(0);
+    setIsIPBlocked(false);
+    
+    // Check if user needs TOTP setup
+    const hasTOTP = await checkTOTPSetup(user);
+    
+    // Only navigate if TOTP is already set up
+    if (hasTOTP) {
+      const role = await getUserRoleAndSetCookies(user);
+      navigateBasedOnRole(role);
+    }
+    
+  } catch (err: any) {
+    // Track failed login attempt
+    const newStatus = await trackFailedLogin(email); // ← Remove the { ip: clientIP } parameter
+    setFailedAttempts(5 - newStatus.attemptsRemaining);
+    
+    if (newStatus.isBlocked && newStatus.blockUntil) {
+      setIsIPBlocked(true);
+      setBlockUntil(newStatus.blockUntil);
+      const blockUntilTime = new Date(newStatus.blockUntil);
+      setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
+    } else if (err?.code === "auth/multi-factor-auth-required") {
+      const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
+      setMfaResolver(mfaResolver)
+      setMfaRequired(true)
+      setError("Multi-factor authentication required. Please enter your TOTP code.")
+    } else {
+      setError(err?.message || "An error occurred during authentication.")
+    }
+  } finally {
+    setLoading(false)
+  }
+}
   const handleMfaVerification = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!mfaResolver || !totpCode) {
-      setError("Please enter a valid TOTP code.")
-      return
-    }
-
-    if (totpCode.length !== 6 || !/^\d+$/.test(totpCode)) {
-      setError("Please enter a valid 6-digit TOTP code.")
-      return
-    }
-
-    setMfaLoading(true)
-    setError("")
-
-    try {
-      const totpFactor = mfaResolver.hints[0]
-
-      if (!totpFactor) {
-        throw new Error("No TOTP factor found.")
-      }
-
-      const assertion = TotpMultiFactorGenerator.assertionForSignIn(totpFactor.uid, totpCode)
-
-      const userCredential = await mfaResolver.resolveSignIn(assertion)
-      const user = userCredential.user
-      
-      console.log("MFA verification successful! User UID:", user.uid)
-      
-      // After MFA, check TOTP setup and navigate
-      const hasTOTP = await checkTOTPSetup(user);
-      
-      if (hasTOTP) {
-        const role = await getUserRoleAndSetCookies(user);
-        navigateBasedOnRole(role);
-      }
-      
-    } catch (err: any) {
-      setError("Invalid TOTP code: " + err.message)
-      setTotpCode("")
-    } finally {
-      setMfaLoading(false)
-    }
+  e.preventDefault()
+  if (!mfaResolver || !totpCode) {
+    setError("Please enter a valid TOTP code.")
+    return
   }
+
+  if (totpCode.length !== 6 || !/^\d+$/.test(totpCode)) {
+    setError("Please enter a valid 6-digit TOTP code.")
+    return
+  }
+
+  setMfaLoading(true)
+  setError("")
+
+  try {
+    const totpFactor = mfaResolver.hints[0]
+
+    if (!totpFactor) {
+      throw new Error("No TOTP factor found.")
+    }
+
+    const assertion = TotpMultiFactorGenerator.assertionForSignIn(totpFactor.uid, totpCode)
+
+    const userCredential = await mfaResolver.resolveSignIn(assertion)
+    const user = userCredential.user
+    
+    console.log("MFA verification successful! User UID:", user.uid)
+    
+    // Reset failed attempts on successful MFA verification
+    await resetFailedAttempts(email); // ← FIXED: Use email instead of { ip: clientIP }
+    setFailedAttempts(0);
+    setIsIPBlocked(false);
+    
+    // After MFA, check TOTP setup and navigate
+    const hasTOTP = await checkTOTPSetup(user);
+    
+    if (hasTOTP) {
+      const role = await getUserRoleAndSetCookies(user);
+      navigateBasedOnRole(role);
+    }
+    
+  } catch (err: any) {
+    setError("Invalid TOTP code: " + err.message)
+    setTotpCode("")
+  } finally {
+    setMfaLoading(false)
+  }
+}
 
   const handleCancelMfa = () => {
     setMfaRequired(false)
@@ -254,35 +293,40 @@ const Login = () => {
   };
 
   // FIXED BACK TO LANDING PAGE FUNCTION
-const handleBackToLanding = async () => {
-  if (isNavigating) return;
-  
-  console.log("Back button clicked - navigating to landing page");
-  setIsNavigating(true);
-  
-  try {
-    // Clear specific auth cookies
-    document.cookie = "idToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    document.cookie = "userRole=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  const handleBackToLanding = async () => {
+    if (isNavigating) return;
     
-    // Sign out from Firebase (non-blocking)
-    signOut(auth).catch(console.error);
+    console.log("Back button clicked - navigating to landing page");
+    setIsNavigating(true);
     
-    // Clear storage
-    localStorage.clear();
-    sessionStorage.clear();
-    
-    console.log("Cleared auth data, redirecting...");
-    
-    // Navigate to landing page - either will work now
-    window.location.href = "/landingpage";
-    // OR: window.location.href = "/"; (both will work)
-    
-  } catch (error) {
-    console.error("Error during back to home:", error);
-    window.location.href = "/landingpage";
-  }
-};
+    try {
+      // Clear specific auth cookies
+      document.cookie = "idToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "userRole=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      
+      // Sign out from Firebase (non-blocking)
+      signOut(auth).catch(console.error);
+      
+      // Clear storage
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      console.log("Cleared auth data, redirecting...");
+      
+      // Navigate to landing page - either will work now
+      window.location.href = "/landingpage";
+      // OR: window.location.href = "/"; (both will work)
+      
+    } catch (error) {
+      console.error("Error during back to home:", error);
+      window.location.href = "/landingpage";
+    }
+  };
+
+  // Format block time for display
+  const formatBlockTime = (timestamp: number) => {
+    return new Date(timestamp).toLocaleTimeString();
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)] flex items-center justify-center p-6 relative">
@@ -308,6 +352,28 @@ const handleBackToLanding = async () => {
             {mfaRequired ? "Verify Your Identity" : "Welcome Back"}
           </h2>
 
+          {/* BRUTE FORCE PROTECTION WARNINGS */}
+          {failedAttempts > 0 && !mfaRequired && (
+            <div className={`p-3 rounded-lg text-sm mb-4 ${
+              failedAttempts >= 3 
+                ? 'bg-red-100 text-red-700 border border-red-300' 
+                : 'bg-yellow-100 text-yellow-700 border border-yellow-300'
+            }`}>
+              {failedAttempts >= 3 ? (
+                <p>⚠️ Multiple failed attempts detected. {5 - failedAttempts} attempts remaining.</p>
+              ) : (
+                <p>⚠️ {failedAttempts} failed attempt(s).</p>
+              )}
+            </div>
+          )}
+
+          {isIPBlocked && blockUntil && !mfaRequired && (
+            <div className="p-3 bg-red-100 text-red-700 rounded-lg border border-red-300 text-sm mb-4">
+              <p>🔒 Account temporarily locked for security.</p>
+              <p>Try again after {formatBlockTime(blockUntil)}</p>
+            </div>
+          )}
+
           {!mfaRequired ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -317,7 +383,8 @@ const handleBackToLanding = async () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  disabled={isIPBlocked}
+                  className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="your@email.com"
                 />
               </div>
@@ -327,7 +394,8 @@ const handleBackToLanding = async () => {
                   <button
                     type="button"
                     onClick={() => setShowForgotDialog(true)}
-                    className="text-sm text-[oklch(0.68_0.19_35)] hover:underline"
+                    className="text-sm text-[oklch(0.68_0.19_35)] hover:underline disabled:opacity-50"
+                    disabled={isIPBlocked}
                   >
                     Forgot password?
                   </button>
@@ -338,13 +406,15 @@ const handleBackToLanding = async () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] pr-10"
+                    disabled={isIPBlocked}
+                    className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] pr-10 disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={togglePasswordVisibility}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)] transition-colors"
+                    disabled={isIPBlocked}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)] transition-colors disabled:opacity-50"
                   >
                     {showPassword ? (
                       <EyeOff className="h-4 w-4" />
@@ -357,7 +427,7 @@ const handleBackToLanding = async () => {
               {error && <p className="text-red-500 text-sm">{error}</p>}
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || isIPBlocked}
                 className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? "Signing in..." : "Sign In"}

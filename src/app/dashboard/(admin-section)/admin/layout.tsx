@@ -2,11 +2,12 @@
 
 import type React from "react"
 import { useRouter, usePathname } from "next/navigation"
-import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield } from "lucide-react"
-import { useState } from "react"
+import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield, User } from "lucide-react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import AuthGuard from '../../../../components/authguard'
 import { auth } from '@/src/lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 
 export default function DashboardLayout({
   children,
@@ -16,11 +17,23 @@ export default function DashboardLayout({
   const router = useRouter()
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [user, setUser] = useState<FirebaseUser | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const navigation = [
     { name: "Dashboard", href: "/dashboard/admin/dashboard", icon: Box },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
   ]
+
+  // Get current user from Firebase
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user)
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -59,41 +72,82 @@ export default function DashboardLayout({
             sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
-          <div className="flex items-center justify-between p-6 border-b border-[oklch(0.25_0.1_250)]">
-            <div className="flex items-center gap-2">
-              <Package className="h-8 w-8 text-[oklch(0.68_0.19_35)]" />
-              <Link href={"/dashboard/admin/dashboard"} className="text-xl font-bold text-white">
-                LogiTrack
-              </Link>
+          <div className="flex flex-col h-full">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-[oklch(0.25_0.1_250)]">
+              <div className="flex items-center gap-2">
+                <Package className="h-8 w-8 text-[oklch(0.68_0.19_35)]" />
+                <Link href={"/dashboard/admin/dashboard"} className="text-xl font-bold text-white">
+                  LogiTrack
+                </Link>
+              </div>
+              <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-white">
+                <X className="h-6 w-6" />
+              </button>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-white">
-              <X className="h-6 w-6" />
-            </button>
-          </div>
 
-          <nav className="p-4 space-y-2">
-            {navigation.map((item) => {
-              const Icon = item.icon
-              const isActive = pathname === item.href
-              return (
-                <button
-                  key={item.name}
-                  onClick={() => {
-                    router.push(item.href)
-                    setSidebarOpen(false)
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    isActive
-                      ? "bg-[oklch(0.68_0.19_35)] text-white"
-                      : "text-[oklch(0.85_0.02_250)] hover:bg-[oklch(0.25_0.1_250)]"
-                  }`}
-                >
-                  <Icon className="h-5 w-5" />
-                  <span className="font-medium">{item.name}</span>
-                </button>
-              )
-            })}
-          </nav>
+            {/* Navigation */}
+            <nav className="flex-1 p-4 space-y-2">
+              {navigation.map((item) => {
+                const Icon = item.icon
+                const isActive = pathname === item.href
+                return (
+                  <button
+                    key={item.name}
+                    onClick={() => {
+                      router.push(item.href)
+                      setSidebarOpen(false)
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                      isActive
+                        ? "bg-[oklch(0.68_0.19_35)] text-white"
+                        : "text-[oklch(0.85_0.02_250)] hover:bg-[oklch(0.25_0.1_250)]"
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="font-medium">{item.name}</span>
+                  </button>
+                )
+              })}
+            </nav>
+
+            {/* User Avatar Footer */}
+            <div className="p-4 border-t border-[oklch(0.25_0.1_250)]">
+              {!loading && user ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-[oklch(0.25_0.1_250)]">
+                  <div className="flex-shrink-0">
+                    {user.photoURL ? (
+                      <img 
+                        src={user.photoURL} 
+                        alt="Profile" 
+                        className="h-10 w-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-[oklch(0.68_0.19_35)] flex items-center justify-center">
+                        <User className="h-6 w-6 text-white" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">
+                      {user.displayName || user.email?.split('@')[0] || 'Admin'}
+                    </p>
+                    <p className="text-xs text-[oklch(0.75_0.02_250)] truncate">
+                      {user.email}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-[oklch(0.25_0.1_250)]">
+                  <div className="h-10 w-10 rounded-full bg-[oklch(0.3_0.1_250)] animate-pulse"></div>
+                  <div className="flex-1">
+                    <div className="h-4 bg-[oklch(0.3_0.1_250)] rounded animate-pulse mb-2"></div>
+                    <div className="h-3 bg-[oklch(0.3_0.1_250)] rounded animate-pulse"></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </aside>
 
         {/* Main content */}
@@ -107,7 +161,7 @@ export default function DashboardLayout({
               <div className="flex items-center gap-4 ml-auto">
                 <button
                   onClick={handleLogout} 
-                  className="px-4 py-2 text-sm text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+                  className="px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors text-sm"
                 >
                   Logout
                 </button>
