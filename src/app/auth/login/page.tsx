@@ -20,9 +20,7 @@ import { auth } from "@/src/lib/firebase"
 import { Package, Eye, EyeOff, ArrowLeft } from "lucide-react"
 import { 
   trackFailedLogin, 
-  checkIPStatus, 
-  resetFailedAttempts, 
-  getClientIP 
+  resetFailedAttempts
 } from '@/src/lib/services/ratelimitservice'
 
 const Login = () => {
@@ -42,6 +40,8 @@ const Login = () => {
   const [failedAttempts, setFailedAttempts] = useState(0)
   const [isIPBlocked, setIsIPBlocked] = useState(false)
   const [blockUntil, setBlockUntil] = useState<number | null>(null)
+  const [showTOTPDialog, setShowTOTPDialog] = useState(false)
+  const [pendingUser, setPendingUser] = useState<any>(null)
   const router = useRouter()
 
   // Function to set ID token and user role as cookies for middleware
@@ -73,7 +73,8 @@ const Login = () => {
         const userData = userDoc.data()
         const role = userData.role || 'user'
         
-        console.log("User role from Firestore:", role)
+        console.log("🎯 User role from Firestore:", role)
+        console.log("📊 User data:", userData)
         
         // Set cookies with the role
         await setAuthCookies(user, role);
@@ -94,22 +95,27 @@ const Login = () => {
 
   // In your login page - update the navigation
   const navigateBasedOnRole = async (role: string) => {
-    console.log("Navigating based on role:", role);
+    console.log("🎯 NAVIGATION DEBUG:");
+    console.log("Role received:", role);
+    console.log("Should go to admin dashboard:", role === 'admin');
     
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    switch (role) {
-      case 'admin':
-        router.push("/dashboard/admin/dashboard");
-        break;
-      case 'user':
-      default:
-        router.push("/dashboard/staff");  // All non-admin users go to staff dashboard
-        break;
-    }
+    // Use window.location to avoid React Router redirect loops
+    setTimeout(() => {
+      switch (role) {
+        case 'admin':
+          console.log("Redirecting to ADMIN dashboard");
+          window.location.href = "/dashboard/admin/dashboard";
+          break;
+        case 'user':
+        default:
+          console.log("Redirecting to STAFF dashboard");
+          window.location.href = "/dashboard/staff";
+          break;
+      }
+    }, 100);
   };
 
-  // Check if user needs TOTP setup
+  // Check if user needs TOTP setup - UPDATED WITH CHOICE
   const checkTOTPSetup = async (user: any): Promise<boolean> => {
     try {
       const enrolledFactors = await multiFactor(user).enrolledFactors;
@@ -117,136 +123,156 @@ const Login = () => {
       
       console.log("User has TOTP setup:", hasTOTP);
       
-      // If user doesn't have TOTP setup, redirect to setup page
       if (!hasTOTP) {
-        console.log("Redirecting to TOTP setup page");
+        console.log("User doesn't have TOTP setup - showing options");
         
-        // Get user role and set cookies before redirecting
+        // Get user role and set cookies first
         const role = await getUserRoleAndSetCookies(user);
-        console.log("Setting cookies for TOTP setup with role:", role);
         
-        router.push("/verifyotp");
+        // Store user and show custom dialog
+        setPendingUser(user);
+        setShowTOTPDialog(true);
+        
+        // Return false to pause navigation - we'll handle it in the dialog
         return false;
       }
       
       return true;
     } catch (error) {
       console.error("Error checking TOTP setup:", error);
-      // If there's an error checking TOTP, proceed with normal login
       return true;
     }
   };
 
+  // TOTP Dialog Handlers
+  const handleSetupTOTP = () => {
+    setShowTOTPDialog(false);
+    setTimeout(() => {
+      window.location.href = "/verifyotp";
+    }, 100);
+  };
+
+  const handleSkipTOTP = async () => {
+    setShowTOTPDialog(false);
+    if (pendingUser) {
+      // Continue to dashboard without TOTP
+      const role = await getUserRoleAndSetCookies(pendingUser);
+      navigateBasedOnRole(role);
+    }
+  };
+
   // UPDATED HANDLE SUBMIT WITH BRUTE FORCE PROTECTION
-const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-  e.preventDefault()
-  
-  // Check rate limit status before attempting login
-  const status = await trackFailedLogin(email); // ← Remove the { ip: clientIP } parameter
-  
-  if (status.isBlocked && status.blockUntil) {
-    setIsIPBlocked(true);
-    setBlockUntil(status.blockUntil);
-    const blockUntilTime = new Date(status.blockUntil);
-    setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
-    return;
-  }
-
-  setLoading(true)
-  setError("")
-  setMfaRequired(false)
-
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password)
-    const user = userCredential.user
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
     
-    console.log("Logged in! User UID:", user.uid)
+    // Check rate limit status before attempting login
+    const status = await trackFailedLogin(email);
     
-    // Reset failed attempts on successful login
-    await resetFailedAttempts(email); // ← Remove the { ip: clientIP } parameter
-    setFailedAttempts(0);
-    setIsIPBlocked(false);
-    
-    // Check if user needs TOTP setup
-    const hasTOTP = await checkTOTPSetup(user);
-    
-    // Only navigate if TOTP is already set up
-    if (hasTOTP) {
-      const role = await getUserRoleAndSetCookies(user);
-      navigateBasedOnRole(role);
-    }
-    
-  } catch (err: any) {
-    // Track failed login attempt
-    const newStatus = await trackFailedLogin(email); // ← Remove the { ip: clientIP } parameter
-    setFailedAttempts(5 - newStatus.attemptsRemaining);
-    
-    if (newStatus.isBlocked && newStatus.blockUntil) {
+    if (status.isBlocked && status.blockUntil) {
       setIsIPBlocked(true);
-      setBlockUntil(newStatus.blockUntil);
-      const blockUntilTime = new Date(newStatus.blockUntil);
+      setBlockUntil(status.blockUntil);
+      const blockUntilTime = new Date(status.blockUntil);
       setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
-    } else if (err?.code === "auth/multi-factor-auth-required") {
-      const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
-      setMfaResolver(mfaResolver)
-      setMfaRequired(true)
-      setError("Multi-factor authentication required. Please enter your TOTP code.")
-    } else {
-      setError(err?.message || "An error occurred during authentication.")
+      return;
     }
-  } finally {
-    setLoading(false)
+
+    setLoading(true)
+    setError("")
+    setMfaRequired(false)
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password)
+      const user = userCredential.user
+      
+      console.log("Logged in! User UID:", user.uid)
+      
+      // Reset failed attempts on successful login
+      await resetFailedAttempts(email);
+      setFailedAttempts(0);
+      setIsIPBlocked(false);
+      
+      // Check if user needs TOTP setup
+      const hasTOTP = await checkTOTPSetup(user);
+      
+      // Only navigate if TOTP is already set up or user skips it
+      if (hasTOTP) {
+        const role = await getUserRoleAndSetCookies(user);
+        navigateBasedOnRole(role);
+      }
+      // If hasTOTP is false, the TOTP dialog will handle navigation
+      
+    } catch (err: any) {
+      // Track failed login attempt
+      const newStatus = await trackFailedLogin(email);
+      setFailedAttempts(5 - newStatus.attemptsRemaining);
+      
+      if (newStatus.isBlocked && newStatus.blockUntil) {
+        setIsIPBlocked(true);
+        setBlockUntil(newStatus.blockUntil);
+        const blockUntilTime = new Date(newStatus.blockUntil);
+        setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
+      } else if (err?.code === "auth/multi-factor-auth-required") {
+        const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
+        setMfaResolver(mfaResolver)
+        setMfaRequired(true)
+        setError("Multi-factor authentication required. Please enter your TOTP code.")
+      } else {
+        setError(err?.message || "An error occurred during authentication.")
+      }
+    } finally {
+      setLoading(false)
+    }
   }
-}
+
   const handleMfaVerification = async (e: React.FormEvent) => {
-  e.preventDefault()
-  if (!mfaResolver || !totpCode) {
-    setError("Please enter a valid TOTP code.")
-    return
-  }
-
-  if (totpCode.length !== 6 || !/^\d+$/.test(totpCode)) {
-    setError("Please enter a valid 6-digit TOTP code.")
-    return
-  }
-
-  setMfaLoading(true)
-  setError("")
-
-  try {
-    const totpFactor = mfaResolver.hints[0]
-
-    if (!totpFactor) {
-      throw new Error("No TOTP factor found.")
+    e.preventDefault()
+    if (!mfaResolver || !totpCode) {
+      setError("Please enter a valid TOTP code.")
+      return
     }
 
-    const assertion = TotpMultiFactorGenerator.assertionForSignIn(totpFactor.uid, totpCode)
-
-    const userCredential = await mfaResolver.resolveSignIn(assertion)
-    const user = userCredential.user
-    
-    console.log("MFA verification successful! User UID:", user.uid)
-    
-    // Reset failed attempts on successful MFA verification
-    await resetFailedAttempts(email); // ← FIXED: Use email instead of { ip: clientIP }
-    setFailedAttempts(0);
-    setIsIPBlocked(false);
-    
-    // After MFA, check TOTP setup and navigate
-    const hasTOTP = await checkTOTPSetup(user);
-    
-    if (hasTOTP) {
-      const role = await getUserRoleAndSetCookies(user);
-      navigateBasedOnRole(role);
+    if (totpCode.length !== 6 || !/^\d+$/.test(totpCode)) {
+      setError("Please enter a valid 6-digit TOTP code.")
+      return
     }
-    
-  } catch (err: any) {
-    setError("Invalid TOTP code: " + err.message)
-    setTotpCode("")
-  } finally {
-    setMfaLoading(false)
+
+    setMfaLoading(true)
+    setError("")
+
+    try {
+      const totpFactor = mfaResolver.hints[0]
+
+      if (!totpFactor) {
+        throw new Error("No TOTP factor found.")
+      }
+
+      const assertion = TotpMultiFactorGenerator.assertionForSignIn(totpFactor.uid, totpCode)
+
+      const userCredential = await mfaResolver.resolveSignIn(assertion)
+      const user = userCredential.user
+      
+      console.log("MFA verification successful! User UID:", user.uid)
+      
+      // Reset failed attempts on successful MFA verification
+      await resetFailedAttempts(email);
+      setFailedAttempts(0);
+      setIsIPBlocked(false);
+      
+      // After MFA, check TOTP setup and navigate
+      const hasTOTP = await checkTOTPSetup(user);
+      
+      if (hasTOTP) {
+        const role = await getUserRoleAndSetCookies(user);
+        navigateBasedOnRole(role);
+      }
+      
+    } catch (err: any) {
+      setError("Invalid TOTP code: " + err.message)
+      setTotpCode("")
+    } finally {
+      setMfaLoading(false)
+    }
   }
-}
 
   const handleCancelMfa = () => {
     setMfaRequired(false)
@@ -315,7 +341,6 @@ const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
       
       // Navigate to landing page - either will work now
       window.location.href = "/landingpage";
-      // OR: window.location.href = "/"; (both will work)
       
     } catch (error) {
       console.error("Error during back to home:", error);
@@ -532,6 +557,50 @@ const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
                 className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {resetLoading ? "Sending..." : "Send Reset Link"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOTP Setup Dialog Modal */}
+      {showTOTPDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-[oklch(0.18_0.08_250)] mb-4">
+              Enhance Your Security
+            </h3>
+            
+            <div className="space-y-4 mb-6">
+              <p className="text-sm text-[oklch(0.45_0_0)]">
+                Two-factor authentication (TOTP) adds an extra layer of security to your account.
+              </p>
+              
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-sm text-blue-700">
+                  <strong>Recommended:</strong> Setup TOTP for better protection against unauthorized access.
+                </p>
+              </div>
+              
+              <p className="text-xs text-[oklch(0.45_0_0)]">
+                You can always setup TOTP later from your profile settings.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleSkipTOTP}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
+              >
+                Skip for Now
+              </button>
+              <button
+                type="button"
+                onClick={handleSetupTOTP}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium"
+              >
+                Setup TOTP
               </button>
             </div>
           </div>

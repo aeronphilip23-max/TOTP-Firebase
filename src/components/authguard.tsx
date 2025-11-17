@@ -44,6 +44,15 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     }
   }, [pathname, router]);
 
+  // FIXED: Handle redirect when no user (moved to useEffect)
+  useEffect(() => {
+    if (!isPublicRoute && !loading && !user && !isRedirecting) {
+      console.log("AuthGuard - No user, redirecting to login");
+      setIsRedirecting(true);
+      router.push('/auth/login');
+    }
+  }, [isPublicRoute, loading, user, isRedirecting, router]);
+
   useEffect(() => {
     // If it's a public route, don't do any auth checks
     if (isPublicRoute) {
@@ -52,9 +61,14 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
       return;
     }
 
+    // Don't proceed if no user or already redirecting
+    if (!user || isRedirecting) {
+      return;
+    }
+
     const checkRoleAndRedirect = async () => {
-      // Don't proceed if still loading, no user, already checked, or already redirecting
-      if (loading || !user || hasCheckedRole || isRedirecting) {
+      // Don't proceed if still loading or already checked
+      if (loading || hasCheckedRole) {
         return;
       }
 
@@ -116,13 +130,13 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     return <>{children}</>;
   }
 
-  // Redirect if no user (only for protected routes)
+  // Don't render anything if no user (redirect will happen in useEffect)
   if (!user) {
-    console.log("AuthGuard - No user, redirecting to login");
-    router.push('/auth/login');
+    console.log("AuthGuard - No user detected, waiting for redirect...");
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <span className="ml-3 text-gray-600">Redirecting to login...</span>
       </div>
     );
   }
