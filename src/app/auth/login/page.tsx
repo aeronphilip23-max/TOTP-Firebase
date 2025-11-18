@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import {
   signInWithEmailAndPassword,
@@ -20,7 +19,8 @@ import { auth } from "@/src/lib/firebase"
 import { Package, Eye, EyeOff, ArrowLeft } from "lucide-react"
 import { 
   trackFailedLogin, 
-  resetFailedAttempts
+  resetFailedAttempts,
+  checkRateLimit 
 } from '@/src/lib/services/ratelimitservice'
 
 const Login = () => {
@@ -38,19 +38,62 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false)
   const [isNavigating, setIsNavigating] = useState(false)
   const [failedAttempts, setFailedAttempts] = useState(0)
-  const [isIPBlocked, setIsIPBlocked] = useState(false)
+  const [isAccountBlocked, setIsAccountBlocked] = useState(false)
   const [blockUntil, setBlockUntil] = useState<number | null>(null)
+  const [blockCount, setBlockCount] = useState(0)
   const [showTOTPDialog, setShowTOTPDialog] = useState(false)
   const [pendingUser, setPendingUser] = useState<any>(null)
   const router = useRouter()
 
+  // Check rate limit status when email changes
+  useEffect(() => {
+    const checkRateLimitStatus = async () => {
+      if (email) {
+        const status = await checkRateLimit(email);
+        setIsAccountBlocked(status.isBlocked);
+        setBlockUntil(status.blockUntil);
+        setBlockCount(status.blockCount || 0);
+        
+        if (status.isBlocked && status.blockUntil) {
+          const blockUntilTime = new Date(status.blockUntil);
+          const blockDuration = getBlockDurationDisplay(status.blockCount || 0);
+          setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
+        } else {
+          if (error.includes('locked') || error.includes('too-many-requests')) {
+            setError("");
+          }
+        }
+      } else {
+        setIsAccountBlocked(false);
+        setBlockUntil(null);
+        setBlockCount(0);
+        setError("");
+      }
+    };
+
+    checkRateLimitStatus();
+  }, [email]);
+
+  // Helper to display progressive block duration
+  const getBlockDurationDisplay = (blockCount: number): string => {
+    const baseMinutes = 15;
+    const progressiveMinutes = baseMinutes * Math.pow(2, blockCount);
+    const finalMinutes = Math.min(progressiveMinutes, 24 * 60);
+    
+    if (finalMinutes < 60) {
+      return `${finalMinutes} minutes`;
+    } else if (finalMinutes < 24 * 60) {
+      const hours = Math.ceil(finalMinutes / 60);
+      return `${hours} hour${hours > 1 ? 's' : ''}`;
+    } else {
+      return "24 hours";
+    }
+  };
+
   // Function to set ID token and user role as cookies for middleware
   const setAuthCookies = async (user: any, role: string = 'user') => {
     try {
-      // Get the ID token
       const idToken = await user.getIdToken();
-      
-      // Set both cookies with proper attributes
       const cookieOptions = `path=/; max-age=3600; samesite=strict`;
       
       document.cookie = `idToken=${idToken}; ${cookieOptions}`;
@@ -76,30 +119,25 @@ const Login = () => {
         console.log("🎯 User role from Firestore:", role)
         console.log("📊 User data:", userData)
         
-        // Set cookies with the role
         await setAuthCookies(user, role);
         return role;
       } else {
         console.error("No user document found for UID:", user.uid)
-        // Set default role if no document found
         await setAuthCookies(user, 'user');
         return 'user';
       }
     } catch (error) {
       console.error("Error getting user role:", error);
-      // Set default role on error
       await setAuthCookies(user, 'user');
       return 'user';
     }
   };
 
-  // In your login page - update the navigation
+  // Navigation based on role
   const navigateBasedOnRole = async (role: string) => {
     console.log("🎯 NAVIGATION DEBUG:");
     console.log("Role received:", role);
-    console.log("Should go to admin dashboard:", role === 'admin');
     
-    // Use window.location to avoid React Router redirect loops
     setTimeout(() => {
       switch (role) {
         case 'admin':
@@ -115,7 +153,7 @@ const Login = () => {
     }, 100);
   };
 
-  // Check if user needs TOTP setup - UPDATED WITH CHOICE
+  // Check if user needs TOTP setup
   const checkTOTPSetup = async (user: any): Promise<boolean> => {
     try {
       const enrolledFactors = await multiFactor(user).enrolledFactors;
@@ -125,15 +163,9 @@ const Login = () => {
       
       if (!hasTOTP) {
         console.log("User doesn't have TOTP setup - showing options");
-        
-        // Get user role and set cookies first
         const role = await getUserRoleAndSetCookies(user);
-        
-        // Store user and show custom dialog
         setPendingUser(user);
         setShowTOTPDialog(true);
-        
-        // Return false to pause navigation - we'll handle it in the dialog
         return false;
       }
       
@@ -155,24 +187,29 @@ const Login = () => {
   const handleSkipTOTP = async () => {
     setShowTOTPDialog(false);
     if (pendingUser) {
-      // Continue to dashboard without TOTP
       const role = await getUserRoleAndSetCookies(pendingUser);
       navigateBasedOnRole(role);
     }
   };
 
-  // UPDATED HANDLE SUBMIT WITH BRUTE FORCE PROTECTION
+  // UPDATED HANDLE SUBMIT - FIXED BLOCKING ISSUE
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
-    // Check rate limit status before attempting login
-    const status = await trackFailedLogin(email);
-    
+    if (!email) {
+      setError("Please enter your email address.");
+      return;
+    }
+
+    // Check if account is blocked BEFORE attempting login
+    const status = await checkRateLimit(email);
     if (status.isBlocked && status.blockUntil) {
-      setIsIPBlocked(true);
+      setIsAccountBlocked(true);
       setBlockUntil(status.blockUntil);
+      setBlockCount(status.blockCount || 0);
       const blockUntilTime = new Date(status.blockUntil);
-      setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
+      const blockDuration = getBlockDurationDisplay(status.blockCount || 0);
+      setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
       return;
     }
 
@@ -189,28 +226,47 @@ const Login = () => {
       // Reset failed attempts on successful login
       await resetFailedAttempts(email);
       setFailedAttempts(0);
-      setIsIPBlocked(false);
+      setIsAccountBlocked(false);
+      setBlockUntil(null);
+      setBlockCount(0);
       
       // Check if user needs TOTP setup
       const hasTOTP = await checkTOTPSetup(user);
       
-      // Only navigate if TOTP is already set up or user skips it
       if (hasTOTP) {
         const role = await getUserRoleAndSetCookies(user);
         navigateBasedOnRole(role);
       }
-      // If hasTOTP is false, the TOTP dialog will handle navigation
       
     } catch (err: any) {
-      // Track failed login attempt
-      const newStatus = await trackFailedLogin(email);
-      setFailedAttempts(5 - newStatus.attemptsRemaining);
+      console.log("Login error:", err);
       
-      if (newStatus.isBlocked && newStatus.blockUntil) {
-        setIsIPBlocked(true);
+      // Handle ALL authentication errors that indicate wrong credentials
+      if (err?.code === "auth/wrong-password" || 
+          err?.code === "auth/user-not-found" || 
+          err?.code === "auth/invalid-credential" ||
+          err?.code === "auth/too-many-requests") {
+        
+        const newStatus = await trackFailedLogin(email);
+        
+        console.log("New rate limit status:", newStatus);
+        
+        // Update all states
+        setFailedAttempts(newStatus.attempts);
+        setIsAccountBlocked(newStatus.isBlocked);
         setBlockUntil(newStatus.blockUntil);
-        const blockUntilTime = new Date(newStatus.blockUntil);
-        setError(`Too many failed attempts. Account locked until ${blockUntilTime.toLocaleTimeString()}`);
+        setBlockCount(newStatus.blockCount || 0);
+        
+        if (newStatus.isBlocked && newStatus.blockUntil) {
+          // Account is now blocked - show our custom blocking message
+          const blockUntilTime = new Date(newStatus.blockUntil);
+          const blockDuration = getBlockDurationDisplay(newStatus.blockCount || 0);
+          setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
+        } else {
+          // Account not blocked yet - show remaining attempts
+          const attemptsLeft = 5 - newStatus.attempts;
+          setError(`Invalid credentials. ${attemptsLeft} attempt(s) remaining.`);
+        }
       } else if (err?.code === "auth/multi-factor-auth-required") {
         const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
         setMfaResolver(mfaResolver)
@@ -256,7 +312,9 @@ const Login = () => {
       // Reset failed attempts on successful MFA verification
       await resetFailedAttempts(email);
       setFailedAttempts(0);
-      setIsIPBlocked(false);
+      setIsAccountBlocked(false);
+      setBlockUntil(null);
+      setBlockCount(0);
       
       // After MFA, check TOTP setup and navigate
       const hasTOTP = await checkTOTPSetup(user);
@@ -318,7 +376,7 @@ const Login = () => {
     setShowPassword(!showPassword);
   };
 
-  // FIXED BACK TO LANDING PAGE FUNCTION
+  // Back to landing page function
   const handleBackToLanding = async () => {
     if (isNavigating) return;
     
@@ -326,22 +384,13 @@ const Login = () => {
     setIsNavigating(true);
     
     try {
-      // Clear specific auth cookies
       document.cookie = "idToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       document.cookie = "userRole=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-      
-      // Sign out from Firebase (non-blocking)
       signOut(auth).catch(console.error);
-      
-      // Clear storage
       localStorage.clear();
       sessionStorage.clear();
-      
       console.log("Cleared auth data, redirecting...");
-      
-      // Navigate to landing page - either will work now
       window.location.href = "/landingpage";
-      
     } catch (error) {
       console.error("Error during back to home:", error);
       window.location.href = "/landingpage";
@@ -351,6 +400,11 @@ const Login = () => {
   // Format block time for display
   const formatBlockTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleTimeString();
+  };
+
+  // Format date and time for display
+  const formatBlockDateTime = (timestamp: number) => {
+    return new Date(timestamp).toLocaleString();
   };
 
   return (
@@ -378,24 +432,25 @@ const Login = () => {
           </h2>
 
           {/* BRUTE FORCE PROTECTION WARNINGS */}
-          {failedAttempts > 0 && !mfaRequired && (
+          {failedAttempts > 0 && !mfaRequired && !isAccountBlocked && (
             <div className={`p-3 rounded-lg text-sm mb-4 ${
               failedAttempts >= 3 
-                ? 'bg-red-100 text-red-700 border border-red-300' 
+                ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' 
                 : 'bg-yellow-100 text-yellow-700 border border-yellow-300'
             }`}>
-              {failedAttempts >= 3 ? (
-                <p>⚠️ Multiple failed attempts detected. {5 - failedAttempts} attempts remaining.</p>
-              ) : (
-                <p>⚠️ {failedAttempts} failed attempt(s).</p>
-              )}
+              <p>⚠️ {failedAttempts} failed attempt(s). {5 - failedAttempts} attempts remaining.</p>
             </div>
           )}
 
-          {isIPBlocked && blockUntil && !mfaRequired && (
+          {isAccountBlocked && blockUntil && !mfaRequired && (
             <div className="p-3 bg-red-100 text-red-700 rounded-lg border border-red-300 text-sm mb-4">
               <p>🔒 Account temporarily locked for security.</p>
-              <p>Try again after {formatBlockTime(blockUntil)}</p>
+              <p>Try again after: {formatBlockDateTime(blockUntil)}</p>
+              {blockCount > 0 && (
+                <p className="text-xs mt-1">
+                  Lock duration increases with repeated blocks for security.
+                </p>
+              )}
             </div>
           )}
 
@@ -408,7 +463,7 @@ const Login = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  disabled={isIPBlocked}
+                  disabled={isAccountBlocked}
                   className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="your@email.com"
                 />
@@ -420,7 +475,7 @@ const Login = () => {
                     type="button"
                     onClick={() => setShowForgotDialog(true)}
                     className="text-sm text-[oklch(0.68_0.19_35)] hover:underline disabled:opacity-50"
-                    disabled={isIPBlocked}
+                    disabled={isAccountBlocked}
                   >
                     Forgot password?
                   </button>
@@ -431,14 +486,14 @@ const Login = () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    disabled={isIPBlocked}
+                    disabled={isAccountBlocked}
                     className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] pr-10 disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={togglePasswordVisibility}
-                    disabled={isIPBlocked}
+                    disabled={isAccountBlocked}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)] transition-colors disabled:opacity-50"
                   >
                     {showPassword ? (
@@ -452,7 +507,7 @@ const Login = () => {
               {error && <p className="text-red-500 text-sm">{error}</p>}
               <button
                 type="submit"
-                disabled={loading || isIPBlocked}
+                disabled={loading || isAccountBlocked}
                 className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? "Signing in..." : "Sign In"}
