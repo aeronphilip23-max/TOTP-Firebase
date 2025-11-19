@@ -211,7 +211,7 @@ export default function DashboardPage() {
   // Calculate changes
   const totalMaterialsChange = calculateChangePercent(totalMaterials, prevTotalMaterials)
   const activeShipmentsChange = calculateChangePercent(activeShipmentsCount, prevActiveShipments)
-  const lowStockChange = calculateChangePercent(lowStockCount, prevLowStockCount )
+  const lowStockChange = calculateChangePercent(prevLowStockCount, lowStockCount)
   const completedTodayChange = calculateChangePercent(completedTodayCount, prevCompletedToday)
 
   useEffect(() => {
