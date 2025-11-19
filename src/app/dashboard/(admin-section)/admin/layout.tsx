@@ -6,8 +6,17 @@ import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield, User } fro
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import AuthGuard from '../../../../components/authguard'
-import { auth } from '@/src/lib/firebase';
+import { auth, db } from '@/src/lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+
+interface UserProfile {
+  name: string;
+  email: string;
+  gender?: string;
+  age?: string;
+  phone?: string;
+}
 
 export default function DashboardLayout({
   children,
@@ -18,6 +27,7 @@ export default function DashboardLayout({
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState<FirebaseUser | null>(null)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   const navigation = [
@@ -25,10 +35,43 @@ export default function DashboardLayout({
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
   ]
 
-  // Get current user from Firebase
+  // Get current user from Firebase and profile from Firestore
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user)
+      
+      if (user) {
+        try {
+          // Fetch user profile from Firestore
+          const userDoc = await getDoc(doc(db, 'users', user.uid))
+          if (userDoc.exists()) {
+            const data = userDoc.data()
+            setUserProfile({
+              name: data.name || user.displayName || user.email?.split('@')[0] || 'Admin',
+              email: data.email || user.email || '',
+              gender: data.gender || '',
+              age: data.age || '',
+              phone: data.phone || '',
+            })
+          } else {
+            // If no profile in Firestore, use auth data
+            setUserProfile({
+              name: user.displayName || user.email?.split('@')[0] || 'Admin',
+              email: user.email || '',
+            })
+          }
+        } catch (error) {
+          console.error('Error loading user profile:', error)
+          // Fallback to auth data if Firestore fails
+          setUserProfile({
+            name: user.displayName || user.email?.split('@')[0] || 'Admin',
+            email: user.email || '',
+          })
+        }
+      } else {
+        setUserProfile(null)
+      }
+      
       setLoading(false)
     })
 
@@ -56,6 +99,21 @@ export default function DashboardLayout({
       // Still redirect even if there's an error
       window.location.href = '/auth/login';
     }
+  };
+
+  // Function to get display name with priority: Firestore name > Auth displayName > email username
+  const getDisplayName = () => {
+    if (userProfile?.name) return userProfile.name;
+    if (user?.displayName) return user.displayName;
+    if (user?.email) return user.email.split('@')[0];
+    return 'Admin';
+  };
+
+  // Function to get display email with priority: Firestore email > Auth email
+  const getDisplayEmail = () => {
+    if (userProfile?.email) return userProfile.email;
+    if (user?.email) return user.email;
+    return '';
   };
 
   return (
@@ -130,10 +188,10 @@ export default function DashboardLayout({
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white truncate">
-                      {user.displayName || user.email?.split('@')[0] || 'Admin'}
+                      {getDisplayName()}
                     </p>
                     <p className="text-xs text-[oklch(0.75_0.02_250)] truncate">
-                      {user.email}
+                      {getDisplayEmail()}
                     </p>
                   </div>
                 </div>

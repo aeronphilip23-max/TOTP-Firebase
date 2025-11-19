@@ -1,11 +1,10 @@
 "use client"
 
-import { Package, Plus, Search, Filter, X, Minus } from "lucide-react"
-import { useState, useEffect } from "react"
+import { Package, Plus, Search, Filter, X, MoreVertical, Edit, Trash2 } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
 
 import { db } from "@/src/lib/firebase"
-
-import { collection, getDocs, doc, setDoc, updateDoc } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 const UNIT_MEASUREMENTS = [
   "units",
@@ -46,12 +45,91 @@ const STOCK_LEVELS = {
   "In Stock": (qty: number) => qty >= 10 && qty <= 100,
 }
 
+const EllipsisMenu = ({ material, onEdit, onDelete }: { material: any, onEdit: () => void, onDelete: () => void }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<'bottom' | 'top'>('bottom');
+  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const toggleMenu = () => {
+    if (!isOpen && buttonRef.current) {
+      const buttonRect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - buttonRect.bottom;
+      const menuHeight = 80;
+      
+      setMenuPosition(spaceBelow < menuHeight ? 'top' : 'bottom');
+    }
+    setIsOpen(!isOpen);
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node) &&
+          buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        onClick={toggleMenu}
+        className="p-2 hover:bg-[oklch(0.96_0_0)] rounded transition-colors"
+      >
+        <MoreVertical className="h-4 w-4 text-[oklch(0.45_0_0)]" />
+      </button>
+      
+      {isOpen && (
+        <div
+          ref={menuRef}
+          className={`absolute right-0 ${
+            menuPosition === 'bottom' ? 'top-full mt-1' : 'bottom-full mb-1'
+          } bg-white border border-[oklch(0.88_0_0)] rounded-lg shadow-lg z-50 min-w-[120px]`}
+        >
+          <button
+            onClick={() => {
+              onEdit();
+              setIsOpen(false);
+            }}
+            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[oklch(0.45_0_0)] hover:bg-[oklch(0.96_0_0)] transition-colors"
+          >
+            <Edit className="h-4 w-4" />
+            Edit
+          </button>
+          <button
+            onClick={() => {
+              onDelete();
+              setIsOpen(false);
+            }}
+            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function InventoryTab() {
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
   const [showFilterInventoryModal, setShowFilterInventoryModal] = useState(false)
-  const [showQuantityModal, setShowQuantityModal] = useState(false)
-  const [quantityInput, setQuantityInput] = useState("")
-  const [quantityAction, setQuantityAction] = useState<{ materialId: string; isAdd: boolean } | null>(null)
+  const [showEditMaterialModal, setShowEditMaterialModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [selectedMaterial, setSelectedMaterial] = useState<{
+    id?: string
+    name?: string
+    category?: string
+    quantity?: number
+    unit?: string
+    location?: string
+  } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All Categories")
   const [selectedStockLevel, setSelectedStockLevel] = useState("All")
@@ -62,6 +140,14 @@ export default function InventoryTab() {
     quantity: "",
     unit: "",
     location: "Warehouse",
+  })
+
+  const [editMaterial, setEditMaterial] = useState({
+    name: "",
+    category: "",
+    quantity: "",
+    unit: "",
+    location: "",
   })
 
   const [materials, setMaterials] = useState<Array<{
@@ -116,24 +202,31 @@ export default function InventoryTab() {
     }
 
     setMaterials(filtered);
-  }
+    }
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const query = e.target.value;
-    setSearchQuery(query);
-    applyFilters(query, selectedCategory, selectedStockLevel);
-  }
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const query = e.target.value;
+      setSearchQuery(query);
+      applyFilters(query, selectedCategory, selectedStockLevel);
+    }
 
-  const handleAddMaterial = async () => {
+    const handleAddMaterial = async () => {
     if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
       alert("Please fill in all fields")
       return
     }
+
+    const quantity = Number.parseInt(newMaterial.quantity);
+    if (quantity < 0) {
+      alert("Quantity cannot be negative");
+      return;
+    }
+
     const material = {
       id: `MAT-${String(allMaterials.length + 1).padStart(4, "0")}`,
       name: newMaterial.name,
       category: newMaterial.category,
-      quantity: Number.parseInt(newMaterial.quantity),
+      quantity: quantity,
       unit: newMaterial.unit,
       location: newMaterial.location,
     }
@@ -146,85 +239,160 @@ export default function InventoryTab() {
       location: material.location,
     });
 
-    const updated = [...allMaterials, material];
-    setAllMaterials(updated);
-    applyFilters(searchQuery, selectedCategory, selectedStockLevel);
-    setShowAddMaterialModal(false)
-    setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
-
-    await getMaterials();
-  }
-
-  // Replace updateQuantity with prompt-based amount input
-  const openQuantityModal = (materialId: string, isAdd: boolean) => {
-    setQuantityAction({ materialId, isAdd })
-    setQuantityInput("")
-    setShowQuantityModal(true)
-  }
-
-  const handleConfirmQuantity = async () => {
-    if (!quantityAction) return
-
-    const amount = parseInt(quantityInput.trim(), 10)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      alert("Please enter a valid positive number")
-      return
+    // FIX: Update state immediately instead of calling getMaterials()
+    const updatedAllMaterials = [...allMaterials, material];
+    setAllMaterials(updatedAllMaterials);
+    
+    // FIX: Also update the filtered materials if it passes current filters
+    const passesFilters = applyFiltersToSingleItem(material, searchQuery, selectedCategory, selectedStockLevel);
+    if (passesFilters) {
+      const updatedMaterials = [...materials, material];
+      setMaterials(updatedMaterials);
     }
 
-    try {
-      const material = allMaterials.find(m => m.id === quantityAction.materialId)
-      if (!material) {
-        alert("Material not found")
-        return
+    setShowAddMaterialModal(false)
+    setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+  }
+
+  // Add this helper function
+  const applyFiltersToSingleItem = (material: any, query: string, category: string, stockLevel: string) => {
+    if (query) {
+      const passesQuery = 
+        material.id?.toLowerCase().includes(query.toLowerCase()) ||
+        material.name?.toLowerCase().includes(query.toLowerCase()) ||
+        material.category?.toLowerCase().includes(query.toLowerCase());
+      if (!passesQuery) return false;
+    }
+
+    if (category !== "All Categories" && material.category !== category) {
+      return false;
+    }
+
+    if (stockLevel !== "All") {
+      const checker = STOCK_LEVELS[stockLevel as keyof typeof STOCK_LEVELS];
+      if (checker && !checker(material.quantity || 0)) {
+        return false;
       }
+    }
 
-      const newQuantity = Math.max(0, (material.quantity || 0) + (quantityAction.isAdd ? amount : -amount))
+    return true;
+  }
 
-      await updateDoc(doc(db, "inventory", quantityAction.materialId), {
-        quantity: newQuantity,
-      })
+  const openEditModal = (material: any) => {
+    setSelectedMaterial(material);
+    setEditMaterial({
+      name: material.name || "",
+      category: material.category || "",
+      quantity: material.quantity?.toString() || "",
+      unit: material.unit || "",
+      location: material.location || "Warehouse",
+    });
+    setShowEditMaterialModal(true);
+  }
 
-      // Update both allMaterials and materials to refresh UI
-      const updatedAll = allMaterials.map(m =>
-        m.id === quantityAction.materialId ? { ...m, quantity: newQuantity } : m
-      )
-      setAllMaterials(updatedAll)
-      
-      // Re-apply filters to refresh the displayed list
-      setMaterials(updatedAll.filter(m => {
-        let passes = true
-        
-        if (searchQuery) {
-          passes = (m.id?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-                   (m.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-                   (m.category?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
-        }
-        
-        if (selectedCategory !== "All Categories") {
-          passes = passes && m.category === selectedCategory
-        }
-        
-        if (selectedStockLevel !== "All") {
-          const checker = STOCK_LEVELS[selectedStockLevel as keyof typeof STOCK_LEVELS]
-          passes = passes && (checker ? checker(m.quantity || 0) : true)
-        }
-        
-        return passes
-      }))
+const openDeleteModal = (material: any) => {
+  setSelectedMaterial(material);
+  setShowDeleteModal(true);
+}
 
-      setShowQuantityModal(false)
-      setQuantityInput("")
-      setQuantityAction(null)
-    } catch (err: any) {
-      console.error("Failed to update quantity:", err)
-      alert("Failed to update quantity: " + (err?.message || String(err)))
+const handleEditMaterial = async () => {
+  if (!selectedMaterial?.id || !editMaterial.name || !editMaterial.category || !editMaterial.quantity || !editMaterial.unit) {
+    alert("Please fill in all fields")
+    return
+  }
+
+  const quantity = Number.parseInt(editMaterial.quantity);
+  if (quantity < 0) {
+    alert("Quantity cannot be negative");
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, "inventory", selectedMaterial.id), {
+      name: editMaterial.name,
+      category: editMaterial.category,
+      quantity: quantity,
+      unit: editMaterial.unit,
+      location: editMaterial.location,
+    });
+
+    // FIX: Update both allMaterials and materials state immediately
+    const updatedAllMaterials = allMaterials.map(m =>
+      m.id === selectedMaterial.id ? { 
+        ...m, 
+        name: editMaterial.name,
+        category: editMaterial.category,
+        quantity: quantity,
+        unit: editMaterial.unit,
+        location: editMaterial.location,
+      } : m
+    );
+    
+    setAllMaterials(updatedAllMaterials);
+    
+    // FIX: Update the filtered materials list too
+    const updatedMaterials = materials.map(m =>
+      m.id === selectedMaterial.id ? { 
+        ...m, 
+        name: editMaterial.name,
+        category: editMaterial.category,
+        quantity: quantity,
+        unit: editMaterial.unit,
+        location: editMaterial.location,
+      } : m
+    );
+    
+    setMaterials(updatedMaterials);
+    
+    setShowEditMaterialModal(false);
+    setSelectedMaterial(null);
+    setEditMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" });
+  } catch (err: any) {
+    console.error("Failed to update material:", err);
+    alert("Failed to update material: " + (err?.message || String(err)));
+  }
+}
+
+const handleDeleteMaterial = async () => {
+  if (!selectedMaterial?.id) return;
+
+  try {
+    await deleteDoc(doc(db, "inventory", selectedMaterial.id));
+
+    // FIX: Update both allMaterials and materials state immediately
+    const updatedAllMaterials = allMaterials.filter(m => m.id !== selectedMaterial.id);
+    setAllMaterials(updatedAllMaterials);
+    
+    // FIX: Update the filtered materials list too
+    const updatedMaterials = materials.filter(m => m.id !== selectedMaterial.id);
+    setMaterials(updatedMaterials);
+    
+    setShowDeleteModal(false);
+    setSelectedMaterial(null);
+  } catch (err: any) {
+    console.error("Failed to delete material:", err);
+    alert("Failed to delete material: " + (err?.message || String(err)));
+  }
+}
+
+  const handleQuantityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    
+    if (value === "") {
+      setEditMaterial({ ...editMaterial, quantity: "" });
+      return;
+    }
+    
+    const numValue = parseInt(value, 10);
+    if (!isNaN(numValue) && numValue >= 0) {
+      setEditMaterial({ ...editMaterial, quantity: value });
     }
   }
 
   const getStockLevelBadge = (quantity: number | undefined) => {
     if (!quantity) return { label: "Out of Stock", color: "bg-gray-100 text-gray-700" };
-    if (quantity < 100) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
-    if (quantity >= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
+    if (quantity < 10) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
+    if (quantity >= 10) return { label: "In Stock", color: "bg-green-100 text-green-700" };
   }
 
   return (
@@ -271,12 +439,13 @@ export default function InventoryTab() {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Quantity</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Stock Level</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Location</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[oklch(0.88_0_0)]">
               {materials.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-[oklch(0.45_0_0)]">
+                  <td colSpan={7} className="px-6 py-4 text-center text-[oklch(0.45_0_0)]">
                     No materials found.
                   </td>
                 </tr>
@@ -294,23 +463,9 @@ export default function InventoryTab() {
                       </td>
                       <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.category}</td>
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => material.id && openQuantityModal(material.id, false)}
-                            className="p-1 hover:bg-red-100 rounded transition-colors"
-                          >
-                            <Minus className="h-4 w-4 text-red-600" />
-                          </button>
-                          <span className="font-medium text-[oklch(0.18_0.08_250)] min-w-[40px] text-center">
-                            {material.quantity} {material.unit}
-                          </span>
-                          <button
-                            onClick={() => material.id && openQuantityModal(material.id, true)}
-                            className="p-1 hover:bg-green-100 rounded transition-colors"
-                          >
-                            <Plus className="h-4 w-4 text-green-600" />
-                          </button>
-                        </div>
+                        <span className="font-medium text-[oklch(0.18_0.08_250)]">
+                          {material.quantity} {material.unit}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-sm">
                         {stockBadge && (
@@ -320,6 +475,13 @@ export default function InventoryTab() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">{material.location}</td>
+                      <td className="px-6 py-4">
+                        <EllipsisMenu
+                          material={material}
+                          onEdit={() => openEditModal(material)}
+                          onDelete={() => openDeleteModal(material)}
+                        />
+                      </td>
                     </tr>
                   );
                 })
@@ -372,7 +534,13 @@ export default function InventoryTab() {
                   <input
                     type="number"
                     value={newMaterial.quantity}
-                    onChange={(e) => setNewMaterial({ ...newMaterial, quantity: e.target.value })}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === "" || (parseInt(value, 10) >= 0)) {
+                        setNewMaterial({ ...newMaterial, quantity: value });
+                      }
+                    }}
+                    min="0"
                     className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                     placeholder="0"
                   />
@@ -414,6 +582,134 @@ export default function InventoryTab() {
                 className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
               >
                 Add Material
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Material Modal */}
+      {showEditMaterialModal && selectedMaterial && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Edit Material</h2>
+              <button
+                onClick={() => setShowEditMaterialModal(false)}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material Name</label>
+                <input
+                  type="text"
+                  value={editMaterial.name}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  placeholder="e.g., Steel Beams"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
+                <select
+                  value={editMaterial.category}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, category: e.target.value })}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                >
+                  <option value="">Select category</option>
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    value={editMaterial.quantity}
+                    onChange={handleQuantityChange}
+                    min="0"
+                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
+                  <select
+                    value={editMaterial.unit}
+                    onChange={(e) => setEditMaterial({ ...editMaterial, unit: e.target.value })}
+                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  >
+                    <option value="">Select unit</option>
+                    {UNIT_MEASUREMENTS.map(unit => (
+                      <option key={unit} value={unit}>{unit}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Location</label>
+                <input
+                  type="text"
+                  value={editMaterial.location}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, location: e.target.value })}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  placeholder="Warehouse"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowEditMaterialModal(false)}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditMaterial}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && selectedMaterial && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Delete Material</h2>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-[oklch(0.45_0_0)]">
+                Are you sure you want to delete <strong>{selectedMaterial.name}</strong> (ID: {selectedMaterial.id})? This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteMaterial}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -472,87 +768,6 @@ export default function InventoryTab() {
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Quantity Modal */}
-      {showQuantityModal && quantityAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">
-                {quantityAction.isAdd ? "Add" : "Deduct"} Quantity
-              </h2>
-              <button
-                onClick={() => {
-                  setShowQuantityModal(false)
-                  setQuantityInput("")
-                  setQuantityAction(null)
-                }}
-                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
-                  Amount {!quantityAction.isAdd && allMaterials.find(m => m.id === quantityAction.materialId) && 
-                    `(Max: ${allMaterials.find(m => m.id === quantityAction.materialId)?.quantity})`}
-                </label>
-                <input
-                  type="number"
-                  value={quantityInput}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (value === "") {
-                      setQuantityInput("");
-                      return;
-                    }
-                    const numValue = parseInt(value, 10);
-                    if (!isNaN(numValue) && numValue > 0) {
-                      if (quantityAction.isAdd) {
-                        // For add: allow up to 10000
-                        if (numValue <= 10000) {
-                          setQuantityInput(value);
-                        }
-                      } else {
-                        // For deduct: allow up to current quantity
-                        const material = allMaterials.find(m => m.id === quantityAction.materialId);
-                        const maxQuantity = material?.quantity || 0;
-                        if (numValue <= maxQuantity) {
-                          setQuantityInput(value);
-                        }
-                      }
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  placeholder={quantityAction.isAdd ? "Max: 10000" : "Enter amount"}
-                  min="1"
-                  max={quantityAction.isAdd ? 10000 : allMaterials.find(m => m.id === quantityAction.materialId)?.quantity}
-                  autoFocus
-                />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowQuantityModal(false)
-                  setQuantityInput("")
-                  setQuantityAction(null)
-                }}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmQuantity}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                Confirm
               </button>
             </div>
           </div>
