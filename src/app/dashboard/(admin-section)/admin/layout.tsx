@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useRouter, usePathname } from "next/navigation"
-import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield, User } from "lucide-react"
+import { Package, BarChart3, Box, FileBox, Settings, Menu, X, Shield, User, Users } from "lucide-react"
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import AuthGuard from '../../../../components/authguard'
@@ -33,6 +33,7 @@ export default function DashboardLayout({
   const navigation = [
     { name: "Dashboard", href: "/dashboard/admin/dashboard", icon: Box },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
+    { name: "Account Management", href: "/dashboard/admin/account-management", icon: Users },
   ]
 
   // Get current user from Firebase and profile from Firestore

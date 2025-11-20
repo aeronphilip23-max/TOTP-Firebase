@@ -1,7 +1,7 @@
 "use client"
 
 import { Package, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react"
-import { Bar, BarChart, Line, LineChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts"
+import { Bar, BarChart, Line, LineChart, XAxis, YAxis, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/src/components/ui/chart"
 import { Calendar } from "@/src/components/ui/calendar"
 import { useState, useEffect } from "react"
@@ -26,10 +26,6 @@ export default function DashboardPage() {
   const [warehouseCapacity, setWarehouseCapacity] = useState(0)
   const [onTimeDeliveryPercent, setOnTimeDeliveryPercent] = useState(94)
   const [recentActivity, setRecentActivity] = useState<Activity[]>([])
-  const [prevTotalMaterials, setPrevTotalMaterials] = useState(0)
-  const [prevActiveShipments, setPrevActiveShipments] = useState(0)
-  const [prevLowStockCount, setPrevLowStockCount] = useState(0)
-  const [prevCompletedToday, setPrevCompletedToday] = useState(0)
 
   const getMaterials = async () => {
     try {
@@ -176,26 +172,6 @@ export default function DashboardPage() {
     return `${diffDays}d ago`
   }
 
-  const calculateChangePercent = (current: number, previous: number) => {
-    if (previous === 0) return { percent: 0, change: "neutral" }
-    const change = ((current - previous) / previous) * 100
-    if (change > 0) return { percent: Math.round(change * 10) / 10, change: "positive" }
-    if (change < 0) return { percent: Math.round(Math.abs(change) * 10) / 10, change: "negative" }
-    return { percent: 0, change: "neutral" }
-  }
-
-  const getChangeColor = (change: string) => {
-    if (change === "positive") return "text-green-600"
-    if (change === "negative") return "text-red-600"
-    return "text-gray-600"
-  }
-
-  const getChangeArrow = (change: string) => {
-    if (change === "positive") return "↑"
-    if (change === "negative") return "↓"
-    return "→"
-  }
-
   useEffect(() => {
     getMaterials()
     getShipmentsData()
@@ -208,28 +184,10 @@ export default function DashboardPage() {
     calculateWarehouseCapacity()
   }, [totalMaterials])
 
-  // Calculate changes
-  const totalMaterialsChange = calculateChangePercent(totalMaterials, prevTotalMaterials)
-  const activeShipmentsChange = calculateChangePercent(activeShipmentsCount, prevActiveShipments)
-  const lowStockChange = calculateChangePercent(prevLowStockCount, lowStockCount)
-  const completedTodayChange = calculateChangePercent(completedTodayCount, prevCompletedToday)
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setPrevTotalMaterials(totalMaterials)
-      setPrevActiveShipments(activeShipmentsCount)
-      setPrevLowStockCount(lowStockCount)
-      setPrevCompletedToday(completedTodayCount)
-    }, 60000)
-
-    return () => clearInterval(timer)
-  }, [totalMaterials, activeShipmentsCount, lowStockCount, completedTodayCount])
-
   const stats = [
     {
       title: "Total Materials",
       value: totalMaterials.toString(),
-      change: totalMaterialsChange,
       icon: Package,
       color: "text-[oklch(0.68_0.19_35)]",
       bgColor: "bg-[oklch(0.68_0.19_35)]/10",
@@ -237,7 +195,6 @@ export default function DashboardPage() {
     {
       title: "Active Shipments",
       value: activeShipmentsCount.toString(),
-      change: activeShipmentsChange,
       icon: TrendingUp,
       color: "text-blue-600",
       bgColor: "bg-blue-100",
@@ -245,7 +202,6 @@ export default function DashboardPage() {
     {
       title: "Low Stock Items",
       value: lowStockCount.toString(),
-      change: lowStockChange,
       icon: AlertTriangle,
       color: "text-yellow-600",
       bgColor: "bg-yellow-100",
@@ -253,7 +209,6 @@ export default function DashboardPage() {
     {
       title: "Completed Today",
       value: completedTodayCount.toString(),
-      change: completedTodayChange,
       icon: CheckCircle,
       color: "text-green-600",
       bgColor: "bg-green-100",
@@ -275,9 +230,6 @@ export default function DashboardPage() {
                   <div className={`w-12 h-12 ${stat.bgColor} rounded-lg flex items-center justify-center`}>
                     <Icon className={`h-6 w-6 ${stat.color}`} />
                   </div>
-                  <span className={`text-sm font-medium ${getChangeColor(stat.change.change)}`}>
-                    {getChangeArrow(stat.change.change)} {stat.change.percent}%
-                  </span>
                 </div>
                 <h3 className="text-2xl font-bold text-[oklch(0.18_0.08_250)]">{stat.value}</h3>
                 <p className="text-sm text-[oklch(0.45_0_0)] mt-1">{stat.title}</p>
@@ -300,7 +252,6 @@ export default function DashboardPage() {
           >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={shipmentsData}>
-                <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
                 <ChartTooltip content={<ChartTooltipContent />} />
@@ -324,7 +275,6 @@ export default function DashboardPage() {
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={inventoryData}>
-                <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
                 <YAxis />
                 <ChartTooltip content={<ChartTooltipContent />} />

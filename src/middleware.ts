@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+
 // Rate limiting setup
 const rateLimitMap = new Map<string, { count: number; lastReset: number }>();
 const RATE_LIMIT_WINDOW = 60000;
@@ -102,8 +103,21 @@ async function checkAuth(request: NextRequest) {
   }
 }
 
+// Firebase token verification function
+async function verifyIdToken(token: string): Promise<any> {
+  // You'll need to implement Firebase Admin token verification here
+  // This is a placeholder - you need to set up Firebase Admin SDK
+  try {
+    // For now, we'll just return a mock verification
+    // In production, you should use Firebase Admin SDK
+    return { uid: 'mock-user-id' };
+  } catch (error) {
+    throw new Error('Token verification failed');
+  }
+}
+
 export async function middleware(request: NextRequest) {
-  const pathname = request.nextUrl.pathname;
+  const { pathname } = request.nextUrl;
 
   // Apply rate limiting
   const ip = getClientIP(request);
@@ -135,20 +149,25 @@ export async function middleware(request: NextRequest) {
 
   const cleanPathname = pathValidation.cleanPath;
 
-  // CRITICAL: Landing page and ALL public paths
+  // CRITICAL: Define ALL public paths (no authentication required)
   const publicPaths = [
     "/",
-    "/landingpage", // LANDING PAGE - MUST BE FIRST
-    "/auth/login",, 
+    "/landingpage",
+    "/auth/login",
+    "/auth/register",
     "/verifyotp",
-    
+    "/api/disable-mfa",
+    "/_next",
+    "/favicon.ico",
+    // Add other public paths here
   ];
 
-  // Check if it's a public path - SIMPLIFIED LOGIC
+  // Check if it's a public path
   const isPublicPath = publicPaths.some((path) => 
     cleanPathname === path || cleanPathname.startsWith(path + '/')
   );
 
+  // If it's a public path, allow access without auth check
   if (isPublicPath) {
     console.log(`✅ Allowing access to public route: ${cleanPathname}`);
     const response = NextResponse.next();
@@ -157,62 +176,116 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Check authentication for protected routes
-  const auth = await checkAuth(request);
+  // Check if user is trying to access protected routes
+  if (cleanPathname.startsWith('/dashboard')) {
+    const token = request.cookies.get('idToken')?.value;
     
-  if (!auth) {
-    console.log('No auth found, redirecting to landing page from:', cleanPathname);
+    // Check for MFA operation in cookies (this is key!)
+    const mfaOperationCookie = request.cookies.get('mfaOperation')?.value;
+    const isMfaOperationActive = mfaOperationCookie === 'true';
     
-    // Don't redirect if user is already trying to access a public page
-    if (cleanPathname === "/landingpage" || cleanPathname === "/" || cleanPathname.startsWith("/auth/")) {
-      return NextResponse.next();
+    // Check if request is from settings page
+    const referer = request.headers.get('referer');
+    const isFromSettings = referer && (referer.includes('/admin/settings') || referer.includes('/staff/settings'));
+    
+    // During MFA operations, allow all settings-related requests to pass through
+    if (isMfaOperationActive && (isFromSettings || cleanPathname.includes('/settings'))) {
+      console.log('🔓 MFA operation in progress - allowing settings page access');
+      const response = NextResponse.next();
+      response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+      response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+      return response;
     }
     
-    // Redirect to landing page instead of login
-    return NextResponse.redirect(new URL("/landingpage", request.url));
-  }
+    if (!token) {
+      console.log(`🔐 No token found for protected route: ${cleanPathname}, redirecting to login`);
+      return NextResponse.redirect(new URL('/auth/login', request.url));
+    }
 
-  // Basic role checking with CLEAN pathname
-  const userRole = auth.role;
+    try {
+      // Verify the token - but be more lenient during MFA operations
+      await verifyIdToken(token);
+      
+      // For protected dashboard routes, check role-based access
+      const auth = await checkAuth(request);
+      if (!auth) {
+        console.log(`🔐 Auth check failed for: ${cleanPathname}, redirecting to login`);
+        return NextResponse.redirect(new URL('/auth/login', request.url));
+      }
 
-  const roleAccessPatterns = {
-    admin: [
-      "/dashboard/admin",
-      "/dashboard/admin/calendar",
-      "/dashboard/admin/dashboard",
-      "/dashboard/admin/inventory",
-      "/dashboard/admin/mock-deliveries",
-      "/dashboard/admin/reports",
-      "/dashboard/admin/settings",
-      "/dashboard/admin/shipments",
-    ],
-    user: [
-      "/dashboard/staff",
-      "/dashboard/staff/calendar",
-      "/dashboard/staff/shipments",
-      "/dashboard/staff/reports",
-      "/dashboard/staff/inventory", 
-      "/dashboard/staff/settings",
-    ],
-  };
+      // Role-based access control
+      const userRole = auth.role;
 
-  const allowedPaths = roleAccessPatterns[userRole as keyof typeof roleAccessPatterns] || [];
-  
-  const hasAccess = allowedPaths.some((allowedPath) => {
-    if (cleanPathname === allowedPath) return true;
-    if (cleanPathname.startsWith(allowedPath + '/')) return true;
-    return false;
-  });
+      const roleAccessPatterns = {
+        admin: [
+          "/dashboard/admin",
+          "/dashboard/admin/calendar",
+          "/dashboard/admin/dashboard", 
+          "/dashboard/admin/inventory",
+          "/dashboard/admin/mock-deliveries",
+          "/dashboard/admin/reports",
+          "/dashboard/admin/settings",
+          "/dashboard/admin/shipments",
+          "/api/admin",
+        ],
+        user: [
+          "/dashboard/staff",
+          "/dashboard/staff/calendar",
+          "/dashboard/staff/shipments",
+          "/dashboard/staff/reports",
+          "/dashboard/staff/inventory", 
+          "/dashboard/staff/settings",
+          "/api/staff",
+        ],
+      };
 
-  if (!hasAccess) {
-    console.log(`Access denied for role ${userRole} to ${cleanPathname}`);
-    
-    let defaultPage = '/dashboard/staff';
-    if (userRole === 'admin') defaultPage = '/dashboard/admin/dashboard';
-    if (userRole === 'user') defaultPage = '/dashboard/staff';
-    
-    console.log(`Redirecting to: ${defaultPage}`);
-    return NextResponse.redirect(new URL(defaultPage, request.url));
+      const allowedPaths = roleAccessPatterns[userRole as keyof typeof roleAccessPatterns] || [];
+      
+      const hasAccess = allowedPaths.some((allowedPath) => {
+        if (cleanPathname === allowedPath) return true;
+        if (cleanPathname.startsWith(allowedPath + '/')) return true;
+        return false;
+      });
+
+      // Allow access to common paths for all roles
+      const commonPaths = [
+        "/dashboard",
+        "/api/auth",
+      ];
+
+      const hasCommonAccess = commonPaths.some((commonPath) => 
+        cleanPathname === commonPath || commonPath.startsWith(commonPath + '/')
+      );
+
+      if (!hasAccess && !hasCommonAccess) {
+        console.log(`🚫 Access denied for role ${userRole} to ${cleanPathname}`);
+        
+        // Redirect to appropriate dashboard based on role
+        let defaultPage = '/dashboard/staff';
+        if (userRole === 'admin') defaultPage = '/dashboard/admin/dashboard';
+        if (userRole === 'user') defaultPage = '/dashboard/staff';
+        console.log(`🔄 Redirecting to: ${defaultPage}`);
+        return NextResponse.redirect(new URL(defaultPage, request.url));
+      }
+
+      console.log(`✅ Access granted for role ${userRole} to ${cleanPathname}`);
+      
+    } catch (error: any) {
+      console.log('Token verification failed:', error);
+      
+      // Special handling for MFA operations - don't redirect if MFA operation is in progress
+      if (isMfaOperationActive && (error.message?.includes('expired') || error.code === 'auth/user-token-expired')) {
+        console.log('🔓 Allowing expired token during MFA operation');
+        const response = NextResponse.next();
+        response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+        response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+        return response;
+      }
+      
+      // Otherwise redirect to login
+      console.log(`🔐 Token verification failed for: ${cleanPathname}, redirecting to login`);
+      return NextResponse.redirect(new URL('/auth/login', request.url));
+    }
   }
 
   const response = NextResponse.next();
@@ -223,8 +296,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Exclude all API routes from middleware so API handlers can return JSON/errors
   matcher: [
-    "/((?!api/|_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

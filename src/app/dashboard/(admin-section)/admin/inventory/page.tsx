@@ -6,29 +6,8 @@ import { useState, useEffect, useRef } from "react"
 import { db } from "@/src/lib/firebase"
 import { collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
-const UNIT_MEASUREMENTS = [
-  "units",
-  "kg",
-  "g",
-  "lbs",
-  "oz",
-  "liters",
-  "ml",
-  "gallons",
-  "cubic meters",
-  "cubic feet",
-  "meters",
-  "feet",
-  "inches",
-  "cm",
-  "mm",
-  "tons",
-  "boxes",
-  "pallets",
-  "rolls",
-  "sheets",
-  "pieces",
-]
+const UNIT_MEASUREMENTS = [ "units","kg","g","lbs","oz","liters","ml","gallons","cubic meters","cubic feet","meters","feet","inches","cm",
+  "mm","tons","boxes","pallets","rolls","sheets","pieces",]
 
 const CATEGORIES = [
   "Structural",

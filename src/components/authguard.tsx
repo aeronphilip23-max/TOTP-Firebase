@@ -32,6 +32,9 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [hasCheckedRole, setHasCheckedRole] = useState(false);
 
+  // Check if MFA operation is in progress
+  const isMfaOperation = typeof window !== 'undefined' && sessionStorage.getItem('mfaOperation') === 'true';
+
   // Check if current route is public
   const isPublicRoute = publicRoutes.includes(pathname);
 
@@ -46,12 +49,12 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
 
   // FIXED: Handle redirect when no user (moved to useEffect)
   useEffect(() => {
-    if (!isPublicRoute && !loading && !user && !isRedirecting) {
+    if (!isPublicRoute && !loading && !user && !isRedirecting && !isMfaOperation) {
       console.log("AuthGuard - No user, redirecting to login");
       setIsRedirecting(true);
       router.push('/auth/login');
     }
-  }, [isPublicRoute, loading, user, isRedirecting, router]);
+  }, [isPublicRoute, loading, user, isRedirecting, isMfaOperation, router]);
 
   useEffect(() => {
     // If it's a public route, don't do any auth checks

@@ -25,33 +25,33 @@ async function geocodeStop(stop: any, index: number) {
         stop.destination || 
         null;
 
-  if (!address) {
-    console.error('[API] Stop data:', JSON.stringify(stop, null, 2));
-    throw new Error(`Stop ${index} has no valid coordinates or address to geocode`);
-  }
-
-  console.log(`[API] Geocoding address for stop ${index}: "${address}"`);
-  const coords = await geocodeAddress(address);
-  
-  if (!coords || !isValidCoordinate(coords.lat, coords.lng)) {
-    throw new Error(
-      `Failed to geocode address for stop ${index}: "${address}". ` +
-      `Please provide a more specific address or valid coordinates.`
-    );
-  }
-
-  // Return stop with normalized structure
-  return {
-    ...stop,
-    location: coords,
-    addresses: {
-      en_PH: {
-        displayString: address,
-        geocoding: coords
-      }
+    if (!address) {
+      console.error('[API] Stop data:', JSON.stringify(stop, null, 2));
+      throw new Error(`Stop ${index} has no valid coordinates or address to geocode`);
     }
-  };
-}
+
+    console.log(`[API] Geocoding address for stop ${index}: "${address}"`);
+    const coords = await geocodeAddress(address);
+    
+    if (!coords || !isValidCoordinate(coords.lat, coords.lng)) {
+      throw new Error(
+        `Failed to geocode address for stop ${index}: "${address}". ` +
+        `Please provide a more specific address or valid coordinates.`
+      );
+    }
+
+    // Return stop with normalized structure
+    return {
+      ...stop,
+      location: coords,
+      addresses: {
+        en_PH: {
+          displayString: address,
+          geocoding: coords
+        }
+      }
+    };
+  }
 
 async function reverseGeocode(lat: number, lng: number, retries = 3) {
   for (let attempt = 0; attempt < retries; attempt++) {

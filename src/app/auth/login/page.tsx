@@ -13,10 +13,11 @@ import {
   sendPasswordResetEmail,
   multiFactor,
   signOut,
+  sendEmailVerification,
 } from "firebase/auth"
 import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
-import { Package, Eye, EyeOff, ArrowLeft } from "lucide-react"
+import { Package, Eye, EyeOff, ArrowLeft, Mail, AlertCircle } from "lucide-react"
 import { 
   trackFailedLogin, 
   resetFailedAttempts,
@@ -41,38 +42,11 @@ const Login = () => {
   const [isAccountBlocked, setIsAccountBlocked] = useState(false)
   const [blockUntil, setBlockUntil] = useState<number | null>(null)
   const [blockCount, setBlockCount] = useState(0)
-  const [showTOTPDialog, setShowTOTPDialog] = useState(false)
-  const [pendingUser, setPendingUser] = useState<any>(null)
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
+  const [resendVerificationLoading, setResendVerificationLoading] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
   const router = useRouter()
-
-  // Check rate limit status when email changes
-  useEffect(() => {
-    const checkRateLimitStatus = async () => {
-      if (email) {
-        const status = await checkRateLimit(email);
-        setIsAccountBlocked(status.isBlocked);
-        setBlockUntil(status.blockUntil);
-        setBlockCount(status.blockCount || 0);
-        
-        if (status.isBlocked && status.blockUntil) {
-          const blockUntilTime = new Date(status.blockUntil);
-          const blockDuration = getBlockDurationDisplay(status.blockCount || 0);
-          setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
-        } else {
-          if (error.includes('locked') || error.includes('too-many-requests')) {
-            setError("");
-          }
-        }
-      } else {
-        setIsAccountBlocked(false);
-        setBlockUntil(null);
-        setBlockCount(0);
-        setError("");
-      }
-    };
-
-    checkRateLimitStatus();
-  }, [email]);
 
   // Helper to display progressive block duration
   const getBlockDurationDisplay = (blockCount: number): string => {
@@ -94,14 +68,23 @@ const Login = () => {
   const setAuthCookies = async (user: any, role: string = 'user') => {
     try {
       const idToken = await user.getIdToken();
-      const cookieOptions = `path=/; max-age=3600; samesite=strict`;
+      
+      // Use SameSite=Lax instead of strict for better compatibility
+      const cookieOptions = `path=/; max-age=3600; SameSite=Lax`;
       
       document.cookie = `idToken=${idToken}; ${cookieOptions}`;
       document.cookie = `userRole=${role}; ${cookieOptions}`;
       
-      console.log("Auth cookies set successfully:", { idToken, role });
+      console.log("✅ Auth cookies set successfully");
+      console.log("🔐 Role set to:", role);
+      console.log("📱 ID Token length:", idToken.length);
+      
+      // Verify cookies were set
+      const cookiesSet = document.cookie.includes('idToken') && document.cookie.includes('userRole');
+      console.log("🍪 Cookies verified:", cookiesSet);
+      
     } catch (error) {
-      console.error("Error setting auth cookies:", error);
+      console.error("❌ Error setting auth cookies:", error);
     }
   };
 
@@ -138,61 +121,59 @@ const Login = () => {
     console.log("🎯 NAVIGATION DEBUG:");
     console.log("Role received:", role);
     
+    // Add a small delay to ensure cookies are set
     setTimeout(() => {
-      switch (role) {
-        case 'admin':
-          console.log("Redirecting to ADMIN dashboard");
-          window.location.href = "/dashboard/admin/dashboard";
-          break;
-        case 'user':
-        default:
-          console.log("Redirecting to STAFF dashboard");
-          window.location.href = "/dashboard/staff";
-          break;
+      const currentPath = window.location.pathname;
+      
+      // Only redirect if we're still on a login/auth page
+      if (currentPath.includes('/auth/')) {
+        switch (role) {
+          case 'admin':
+            console.log("Redirecting to ADMIN dashboard");
+            window.location.replace("/dashboard/admin/dashboard");
+            break;
+          case 'user':
+          default:
+            console.log("Redirecting to STAFF dashboard");
+            window.location.replace("/dashboard/staff");
+            break;
+        }
       }
-    }, 100);
+    }, 200);
   };
 
-  // Check if user needs TOTP setup
-  const checkTOTPSetup = async (user: any): Promise<boolean> => {
+  // Resend email verification
+  const handleResendVerification = async () => {
+    setResendVerificationLoading(true);
+    setError("");
+
     try {
-      const enrolledFactors = await multiFactor(user).enrolledFactors;
-      const hasTOTP = enrolledFactors.some(factor => factor.factorId === TotpMultiFactorGenerator.FACTOR_ID);
+      // Create a temporary auth instance to send verification email
+      const tempAuth = getAuth();
+      const user = tempAuth.currentUser;
       
-      console.log("User has TOTP setup:", hasTOTP);
-      
-      if (!hasTOTP) {
-        console.log("User doesn't have TOTP setup - showing options");
-        const role = await getUserRoleAndSetCookies(user);
-        setPendingUser(user);
-        setShowTOTPDialog(true);
-        return false;
+      if (user) {
+        await sendEmailVerification(user);
+        setVerificationSent(true);
+        setError("");
+      } else {
+        // If no user is currently signed in, try to sign in temporarily to send verification
+        const userCredential = await signInWithEmailAndPassword(tempAuth, email, password);
+        await sendEmailVerification(userCredential.user);
+        // Sign out the temporary user
+        await signOut(tempAuth);
+        setVerificationSent(true);
+        setError("");
       }
-      
-      return true;
-    } catch (error) {
-      console.error("Error checking TOTP setup:", error);
-      return true;
+    } catch (err: any) {
+      console.error("Error sending verification email:", err);
+      setError("Failed to send verification email. Please try again.");
+    } finally {
+      setResendVerificationLoading(false);
     }
   };
 
-  // TOTP Dialog Handlers
-  const handleSetupTOTP = () => {
-    setShowTOTPDialog(false);
-    setTimeout(() => {
-      window.location.href = "/verifyotp";
-    }, 100);
-  };
-
-  const handleSkipTOTP = async () => {
-    setShowTOTPDialog(false);
-    if (pendingUser) {
-      const role = await getUserRoleAndSetCookies(pendingUser);
-      navigateBasedOnRole(role);
-    }
-  };
-
-  // UPDATED HANDLE SUBMIT - FIXED BLOCKING ISSUE
+  // FIXED HANDLE SUBMIT - REMOVED LOCALSTORAGE FALLBACK
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
@@ -201,9 +182,18 @@ const Login = () => {
       return;
     }
 
-    // Check if account is blocked BEFORE attempting login
-    const status = await checkRateLimit(email);
-    if (status.isBlocked && status.blockUntil) {
+    // Check if account is blocked using Firestore rate limiting
+    let status;
+    try {
+      status = await checkRateLimit(email);
+      console.log("Rate limit status:", status);
+    } catch (error) {
+      console.error("Error checking rate limit:", error);
+      // If rate limit check fails, continue with login attempt
+      // Don't block the user due to a rate limit service error
+    }
+
+    if (status?.isBlocked && status.blockUntil) {
       setIsAccountBlocked(true);
       setBlockUntil(status.blockUntil);
       setBlockCount(status.blockCount || 0);
@@ -216,6 +206,7 @@ const Login = () => {
     setLoading(true)
     setError("")
     setMfaRequired(false)
+    setEmailNotVerified(false)
 
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
@@ -223,21 +214,41 @@ const Login = () => {
       
       console.log("Logged in! User UID:", user.uid)
       
+      // CHECK IF EMAIL IS VERIFIED
+      if (!user.emailVerified) {
+        setEmailNotVerified(true);
+        setError("Please verify your email address before logging in.");
+        
+        // Sign out the user since they're not verified
+        await signOut(auth);
+        setLoading(false);
+        return;
+      }
+      
       // Reset failed attempts on successful login
-      await resetFailedAttempts(email);
+      try {
+        await resetFailedAttempts(email);
+      } catch (error) {
+        console.error("Error resetting failed attempts:", error);
+        // Continue even if reset fails
+      }
+      
       setFailedAttempts(0);
       setIsAccountBlocked(false);
       setBlockUntil(null);
       setBlockCount(0);
       
-      // Check if user needs TOTP setup
-      const hasTOTP = await checkTOTPSetup(user);
-      
-      if (hasTOTP) {
+      // Direct navigation without TOTP setup check
+      if (!isRedirecting) {
+        setIsRedirecting(true);
         const role = await getUserRoleAndSetCookies(user);
-        navigateBasedOnRole(role);
+        
+        // Add a small delay to ensure everything is processed
+        setTimeout(() => {
+          navigateBasedOnRole(role);
+        }, 500);
       }
-      
+            
     } catch (err: any) {
       console.log("Login error:", err);
       
@@ -247,25 +258,31 @@ const Login = () => {
           err?.code === "auth/invalid-credential" ||
           err?.code === "auth/too-many-requests") {
         
-        const newStatus = await trackFailedLogin(email);
-        
-        console.log("New rate limit status:", newStatus);
-        
-        // Update all states
-        setFailedAttempts(newStatus.attempts);
-        setIsAccountBlocked(newStatus.isBlocked);
-        setBlockUntil(newStatus.blockUntil);
-        setBlockCount(newStatus.blockCount || 0);
-        
-        if (newStatus.isBlocked && newStatus.blockUntil) {
-          // Account is now blocked - show our custom blocking message
-          const blockUntilTime = new Date(newStatus.blockUntil);
-          const blockDuration = getBlockDurationDisplay(newStatus.blockCount || 0);
-          setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
-        } else {
-          // Account not blocked yet - show remaining attempts
-          const attemptsLeft = 5 - newStatus.attempts;
-          setError(`Invalid credentials. ${attemptsLeft} attempt(s) remaining.`);
+        try {
+          const newStatus = await trackFailedLogin(email);
+          
+          console.log("New rate limit status:", newStatus);
+          
+          // Update all states
+          setFailedAttempts(newStatus.attempts);
+          setIsAccountBlocked(newStatus.isBlocked);
+          setBlockUntil(newStatus.blockUntil);
+          setBlockCount(newStatus.blockCount || 0);
+          
+          if (newStatus.isBlocked && newStatus.blockUntil) {
+            // Account is now blocked - show our custom blocking message
+            const blockUntilTime = new Date(newStatus.blockUntil);
+            const blockDuration = getBlockDurationDisplay(newStatus.blockCount || 0);
+            setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
+          } else {
+            // Account not blocked yet - show remaining attempts
+            const attemptsLeft = 5 - newStatus.attempts;
+            setError(`Invalid credentials. ${attemptsLeft} attempt(s) remaining.`);
+          }
+        } catch (rateLimitError) {
+          console.error("Error tracking failed login:", rateLimitError);
+          // Fallback error message if rate limit service fails
+          setError("Invalid credentials. Please try again.");
         }
       } else if (err?.code === "auth/multi-factor-auth-required") {
         const mfaResolver = getMultiFactorResolver(getAuth(), err as MultiFactorError)
@@ -309,19 +326,39 @@ const Login = () => {
       
       console.log("MFA verification successful! User UID:", user.uid)
       
+      // CHECK IF EMAIL IS VERIFIED AFTER MFA
+      if (!user.emailVerified) {
+        setEmailNotVerified(true);
+        setError("Please verify your email address before logging in.");
+        
+        // Sign out the user since they're not verified
+        await signOut(auth);
+        setMfaLoading(false);
+        return;
+      }
+      
       // Reset failed attempts on successful MFA verification
-      await resetFailedAttempts(email);
+      try {
+        await resetFailedAttempts(email);
+      } catch (error) {
+        console.error("Error resetting failed attempts:", error);
+        // Continue even if reset fails
+      }
+      
       setFailedAttempts(0);
       setIsAccountBlocked(false);
       setBlockUntil(null);
       setBlockCount(0);
       
-      // After MFA, check TOTP setup and navigate
-      const hasTOTP = await checkTOTPSetup(user);
-      
-      if (hasTOTP) {
+      // After MFA, navigate directly without TOTP setup check
+      if (!isRedirecting) {
+        setIsRedirecting(true);
         const role = await getUserRoleAndSetCookies(user);
-        navigateBasedOnRole(role);
+        
+        // Add a small delay to ensure everything is processed
+        setTimeout(() => {
+          navigateBasedOnRole(role);
+        }, 500);
       }
       
     } catch (err: any) {
@@ -387,8 +424,13 @@ const Login = () => {
       document.cookie = "idToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       document.cookie = "userRole=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       signOut(auth).catch(console.error);
-      localStorage.clear();
-      sessionStorage.clear();
+      
+      // Only clear localStorage if it's available (client-side)
+      if (typeof window !== 'undefined') {
+        localStorage.clear();
+        sessionStorage.clear();
+      }
+      
       console.log("Cleared auth data, redirecting...");
       window.location.href = "/landingpage";
     } catch (error) {
@@ -397,14 +439,17 @@ const Login = () => {
     }
   };
 
-  // Format block time for display
-  const formatBlockTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleTimeString();
-  };
-
   // Format date and time for display
   const formatBlockDateTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
+  };
+
+  // FIXED: Check if account is currently blocked - always returns boolean
+  const isCurrentlyBlocked = (): boolean => {
+    if (!isAccountBlocked || !blockUntil) {
+      return false;
+    }
+    return Date.now() < blockUntil;
   };
 
   return (
@@ -431,8 +476,38 @@ const Login = () => {
             {mfaRequired ? "Verify Your Identity" : "Welcome Back"}
           </h2>
 
+          {/* EMAIL VERIFICATION REQUIRED WARNING */}
+          {emailNotVerified && (
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="font-medium text-yellow-800 mb-2">Email Verification Required</h3>
+                  <p className="text-yellow-700 text-sm mb-3">
+                    Please verify your email address before logging in. Check your inbox for the verification email.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleResendVerification}
+                      disabled={resendVerificationLoading || verificationSent}
+                      className="px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      <Mail className="h-3 w-3" />
+                      {resendVerificationLoading ? "Sending..." : verificationSent ? "Sent!" : "Resend Verification"}
+                    </button>
+                    {verificationSent && (
+                      <span className="text-green-600 text-sm flex items-center">
+                        ✓ Check your email
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* BRUTE FORCE PROTECTION WARNINGS */}
-          {failedAttempts > 0 && !mfaRequired && !isAccountBlocked && (
+          {failedAttempts > 0 && !mfaRequired && !isCurrentlyBlocked() && !emailNotVerified && (
             <div className={`p-3 rounded-lg text-sm mb-4 ${
               failedAttempts >= 3 
                 ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' 
@@ -442,7 +517,7 @@ const Login = () => {
             </div>
           )}
 
-          {isAccountBlocked && blockUntil && !mfaRequired && (
+          {isCurrentlyBlocked() && blockUntil && !mfaRequired && !emailNotVerified && (
             <div className="p-3 bg-red-100 text-red-700 rounded-lg border border-red-300 text-sm mb-4">
               <p>🔒 Account temporarily locked for security.</p>
               <p>Try again after: {formatBlockDateTime(blockUntil)}</p>
@@ -463,7 +538,7 @@ const Login = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  disabled={isAccountBlocked}
+                  disabled={isCurrentlyBlocked()}
                   className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="your@email.com"
                 />
@@ -475,7 +550,7 @@ const Login = () => {
                     type="button"
                     onClick={() => setShowForgotDialog(true)}
                     className="text-sm text-[oklch(0.68_0.19_35)] hover:underline disabled:opacity-50"
-                    disabled={isAccountBlocked}
+                    disabled={isCurrentlyBlocked()}
                   >
                     Forgot password?
                   </button>
@@ -486,14 +561,14 @@ const Login = () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    disabled={isAccountBlocked}
+                    disabled={isCurrentlyBlocked()}
                     className="w-full px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] pr-10 disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={togglePasswordVisibility}
-                    disabled={isAccountBlocked}
+                    disabled={isCurrentlyBlocked()}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)] transition-colors disabled:opacity-50"
                   >
                     {showPassword ? (
@@ -504,10 +579,10 @@ const Login = () => {
                   </button>
                 </div>
               </div>
-              {error && <p className="text-red-500 text-sm">{error}</p>}
+              {error && !emailNotVerified && <p className="text-red-500 text-sm">{error}</p>}
               <button
                 type="submit"
-                disabled={loading || isAccountBlocked}
+                disabled={loading || isCurrentlyBlocked()}
                 className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? "Signing in..." : "Sign In"}
@@ -553,18 +628,6 @@ const Login = () => {
                 </button>
               </div>
             </form>
-          )}
-
-          {!mfaRequired && (
-            <p className="mt-6 text-center text-sm text-[oklch(0.45_0_0)]">
-              Create your account{" "}
-              <button
-                onClick={() => router.push("/auth/register")}
-                className="text-[oklch(0.68_0.19_35)] hover:underline font-medium"
-              >
-                Click here
-              </button>
-            </p>
           )}
         </div>
       </div>
@@ -612,50 +675,6 @@ const Login = () => {
                 className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {resetLoading ? "Sending..." : "Send Reset Link"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TOTP Setup Dialog Modal */}
-      {showTOTPDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold text-[oklch(0.18_0.08_250)] mb-4">
-              Enhance Your Security
-            </h3>
-            
-            <div className="space-y-4 mb-6">
-              <p className="text-sm text-[oklch(0.45_0_0)]">
-                Two-factor authentication (TOTP) adds an extra layer of security to your account.
-              </p>
-              
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <p className="text-sm text-blue-700">
-                  <strong>Recommended:</strong> Setup TOTP for better protection against unauthorized access.
-                </p>
-              </div>
-              
-              <p className="text-xs text-[oklch(0.45_0_0)]">
-                You can always setup TOTP later from your profile settings.
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={handleSkipTOTP}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
-              >
-                Skip for Now
-              </button>
-              <button
-                type="button"
-                onClick={handleSetupTOTP}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium"
-              >
-                Setup TOTP
               </button>
             </div>
           </div>

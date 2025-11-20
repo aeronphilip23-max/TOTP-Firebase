@@ -1,6 +1,6 @@
 "use client"
 
-import { User, Lock, UserPlus, X, Shield, QrCode, Calendar } from "lucide-react"
+import { User, Lock, X, Shield, QrCode, Calendar } from "lucide-react"
 import { useState, useEffect } from "react"
 import { useAuth } from "@/src/context/authcontext"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
@@ -10,32 +10,22 @@ import { multiFactor, TotpMultiFactorGenerator } from "firebase/auth"
 import { QRCodeSVG } from "qrcode.react"
 
 export default function SettingsTab() {
-  const { user } = useAuth()
-  const [settingsTab, setSettingsTab] = useState<"profile" | "security" | "accounts">("profile")
-  const [showCreateAccountModal, setShowCreateAccountModal] = useState(false)
-  const [showTotpModal, setShowTotpModal] = useState(false)
-  const [userProfile, setUserProfile] = useState({
+  const { user , refreshIdToken } = useAuth()
+  const [ settingsTab, setSettingsTab ] = useState<"profile" | "security">("profile")
+  const [ showTotpModal, setShowTotpModal ] = useState(false)
+  const [ userProfile, setUserProfile ] = useState({
     fullName: "",
     gender: "",
     birthday: "",
     email: "",
     phone: "",
   })
-  const [newAccount, setNewAccount] = useState({
-    name: "",
-    email: "",
-    password: "",
-    role: "user",
-  })
-  const [totpData, setTotpData] = useState({
+  const [ totpData, setTotpData ] = useState({
     secret: null as any,
     uri: "",
     code: "",
     isEnrolled: false,
   })
-  const [accountError, setAccountError] = useState("")
-  const [accountSuccess, setAccountSuccess] = useState("")
-  const [accountLoading, setAccountLoading] = useState(false)
   const [profileLoading, setProfileLoading] = useState(false)
   const [profileSuccess, setProfileSuccess] = useState("")
   const [profileError, setProfileError] = useState("")
@@ -121,7 +111,6 @@ export default function SettingsTab() {
     return maxDate.toISOString().split('T')[0]
   }
 
-
   // Check if TOTP is already enrolled
   const checkTotpStatus = async () => {
     if (!user) return
@@ -169,93 +158,117 @@ export default function SettingsTab() {
   }
 
   // Verify and enroll TOTP
-  const verifyTotp = async () => {
-    if (!user || !totpData.secret || !totpData.code) {
-      setTotpError("Please provide a valid TOTP code.")
-      return
-    }
-
-    setTotpLoading(true)
-    setTotpError("")
-
-    try {
-      await multiFactor(user).enroll(
-        TotpMultiFactorGenerator.assertionForEnrollment(totpData.secret, totpData.code),
-        "TOTP Authenticator",
-      )
-      
-      setTotpSuccess("TOTP enabled successfully!")
-      setTotpData(prev => ({ ...prev, isEnrolled: true }))
-      
-      toast({
-        title: "Success",
-        description: "Two-factor authentication has been enabled.",
-      })
-
-      setTimeout(() => {
-        setShowTotpModal(false)
-        setTotpSuccess("")
-      }, 2000)
-    } catch (error) {
-      console.error('Error enrolling TOTP:', error)
-      setTotpError("Invalid TOTP code. Please try again.")
-      toast({
-        title: "Error",
-        description: "Failed to enable TOTP.",
-        variant: "destructive",
-      })
-    } finally {
-      setTotpLoading(false)
-    }
-  }
-
-  // Disable TOTP using the API endpoint
-  const disableTotp = async () => {
-    if (!user) return
-    
-    setTotpLoading(true)
-    setTotpError("")
-
-    try {
-      const idToken = await user.getIdToken()
-      
-      const response = await fetch('/api/disable-mfa', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ idToken }),
-      })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to disable MFA')
+    const verifyTotp = async () => {
+      if (!user || !totpData.secret || !totpData.code) {
+        setTotpError("Please provide a valid TOTP code.")
+        return
       }
 
-      setTotpSuccess("TOTP disabled successfully!")
-      setTotpData(prev => ({ ...prev, isEnrolled: false }))
-      
-      toast({
-        title: "Success",
-        description: "Two-factor authentication has been disabled.",
-      })
+      setTotpLoading(true)
+      setTotpError("")
 
-      // Force refresh the user token to reflect the changes
-      await user.getIdToken(true)
-      
-    } catch (error) {
-      console.error('Error disabling TOTP:', error)
-      setTotpError("Failed to disable TOTP. Please try again.")
-      toast({
-        title: "Error",
-        description: "Failed to disable TOTP.",
-        variant: "destructive",
-      })
-    } finally {
-      setTotpLoading(false)
+      try {
+        await multiFactor(user).enroll(
+          TotpMultiFactorGenerator.assertionForEnrollment(totpData.secret, totpData.code),
+          "TOTP Authenticator",
+        )
+        
+        setTotpSuccess("TOTP enabled successfully!")
+        setTotpData(prev => ({ ...prev, isEnrolled: true }))
+        
+        toast({
+          title: "Success",
+          description: "Two-factor authentication has been enabled.",
+        })
+
+        setTimeout(() => {
+          setShowTotpModal(false)
+          setTotpSuccess("")
+        }, 2000)
+      } catch (error) {
+        console.error('Error enrolling TOTP:', error)
+        setTotpError("Invalid TOTP code. Please try again.")
+        toast({
+          title: "Error",
+          description: "Failed to enable TOTP.",
+          variant: "destructive",
+        })
+      } finally {
+        setTotpLoading(false)
+      }
     }
+
+
+// Disable TOTP with proper token handling
+const disableTotp = async () => {
+  if (!user) return;
+  
+  setTotpLoading(true);
+  setTotpError("");
+
+  try {
+    const freshIdToken = await refreshIdToken();
+    
+    if (!freshIdToken) {
+      throw new Error('Failed to refresh authentication token');
+    }
+
+    const response = await fetch('/api/disable-mfa', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ idToken: freshIdToken }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to disable MFA');
+    }
+
+    // If we got a custom token, sign in with it immediately
+    if (result.customToken) {
+      console.log('🔄 Signing in with new custom token to prevent expiration');
+      
+      // Import signInWithCustomToken from firebase/auth at the top of your file
+      const { signInWithCustomToken } = await import('firebase/auth');
+      const { auth } = await import('@/src/lib/firebase');
+      
+      // Sign in with the new custom token
+      await signInWithCustomToken(auth, result.customToken);
+      
+      // Get the new ID token
+      const newUser = auth.currentUser;
+      if (newUser) {
+        const newIdToken = await newUser.getIdToken(true);
+        document.cookie = `idToken=${newIdToken}; path=/; max-age=3600; SameSite=Lax`;
+        console.log('✅ Successfully signed in with new token after MFA disable');
+      }
+    }
+
+    // Update UI state
+    setTotpSuccess("TOTP disabled successfully!");
+    setTotpData(prev => ({ ...prev, isEnrolled: false }));
+    
+    toast({
+      title: "Success",
+      description: "Two-factor authentication has been disabled.",
+    });
+    
+  } catch (error: any) {
+    console.error('Error disabling TOTP:', error);
+    
+    setTotpError(error.message || "Failed to disable TOTP. Please try again.");
+    toast({
+      title: "Error",
+      description: error.message || "Failed to disable TOTP.",
+      variant: "destructive",
+    });
+  } finally {
+    setTotpLoading(false);
   }
+};
 
     const handleSaveProfile = async () => {
     if (!user) {
@@ -309,42 +322,6 @@ export default function SettingsTab() {
     }
   }
 
-  const handleCreateAccount = async () => {
-    setAccountError("")
-    setAccountSuccess("")
-    setAccountLoading(true)
-
-    try {
-      const { email, name, password, role } = newAccount
-
-      if (!name || !email || !password) {
-        setAccountError("Please fill in all fields.")
-        setAccountLoading(false)
-        return
-      }
-
-      if (password.length < 6) {
-        setAccountError("Password should be at least 6 characters long.")
-        setAccountLoading(false)
-        return
-      }
-
-      // Simulate account creation (replace with actual Firebase logic)
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-
-      setAccountSuccess(`Account created successfully for ${name}!`)
-      setTimeout(() => {
-        setShowCreateAccountModal(false)
-        setNewAccount({ name: "", email: "", password: "", role: "user" })
-        setAccountSuccess("")
-      }, 2000)
-    } catch (error) {
-      setAccountError("Error creating account. Please try again.")
-    } finally {
-      setAccountLoading(false)
-    }
-  }
-
   return (
     <>
       <div className="max-w-4xl space-y-6">
@@ -373,17 +350,6 @@ export default function SettingsTab() {
           >
             <Lock className="h-5 w-5" />
             Security
-          </button>
-          <button
-            onClick={() => setSettingsTab("accounts")}
-            className={`flex items-center gap-2 px-4 py-2 border-b-2 transition-colors ${
-              settingsTab === "accounts"
-                ? "border-[oklch(0.68_0.19_35)] text-[oklch(0.68_0.19_35)]"
-                : "border-transparent text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
-            }`}
-          >
-            <UserPlus className="h-5 w-5" />
-            Account Management
           </button>
         </div>
 
@@ -560,155 +526,7 @@ export default function SettingsTab() {
             </div>
           </div>
         )}
-
-        {/* Account Management tab */}
-        {settingsTab === "accounts" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">User Account Management</h3>
-                <p className="text-sm text-[oklch(0.45_0_0)] mt-1">Create and manage user accounts for the system</p>
-              </div>
-              <button
-                onClick={() => setShowCreateAccountModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
-              >
-                <UserPlus className="h-5 w-5" />
-                Create Account
-              </button>
-            </div>
-
-            <div className="bg-white rounded-lg border border-[oklch(0.88_0_0)] overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-[oklch(0.96_0_0)]">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Name</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Email</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Role</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[oklch(0.88_0_0)]">
-                  <tr className="hover:bg-[oklch(0.98_0_0)]">
-                    <td className="px-6 py-4 text-sm text-[oklch(0.18_0.08_250)] font-medium">John Doe</td>
-                    <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">john.doe@example.com</td>
-                    <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">User</td>
-                    <td className="px-6 py-4">
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                        Active
-                      </span>
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-[oklch(0.98_0_0)]">
-                    <td className="px-6 py-4 text-sm text-[oklch(0.18_0.08_250)] font-medium">Jane Smith</td>
-                    <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">jane.smith@example.com</td>
-                    <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">User</td>
-                    <td className="px-6 py-4">
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                        Active
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* Create Account Modal */}
-      {showCreateAccountModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Create New Account</h2>
-              <button
-                onClick={() => {
-                  setShowCreateAccountModal(false)
-                  setAccountError("")
-                  setAccountSuccess("")
-                }}
-                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={newAccount.name}
-                  onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
-                  placeholder="John Doe"
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  disabled={accountLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Email</label>
-                <input
-                  type="email"
-                  value={newAccount.email}
-                  onChange={(e) => setNewAccount({ ...newAccount, email: e.target.value })}
-                  placeholder="user@example.com"
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  disabled={accountLoading}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Password</label>
-                <input
-                  type="password"
-                  value={newAccount.password}
-                  onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })}
-                  placeholder="••••••••"
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  disabled={accountLoading}
-                />
-                <p className="text-xs text-[oklch(0.45_0_0)] mt-1">Minimum 6 characters</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Role</label>
-                <select
-                  value={newAccount.role}
-                  onChange={(e) => setNewAccount({ ...newAccount, role: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
-                  disabled={accountLoading}
-                >
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-
-              {accountError && <p className="text-red-500 text-sm">{accountError}</p>}
-              {accountSuccess && <p className="text-green-600 text-sm">{accountSuccess}</p>}
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowCreateAccountModal(false)
-                  setAccountError("")
-                  setAccountSuccess("")
-                }}
-                disabled={accountLoading}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateAccount}
-                disabled={accountLoading}
-                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors disabled:opacity-50"
-              >
-                {accountLoading ? "Creating..." : "Create Account"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* TOTP Setup Modal */}
       {showTotpModal && (

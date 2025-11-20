@@ -1,13 +1,30 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===== BRUTE FORCE PROTECTION =====
+    // ===== PUBLIC RATE LIMIT ACCESS (Required for login functionality) =====
+    // Allow public read/write access to rate limit collections for login security
+    // This is necessary because users aren't authenticated during login attempts
     match /failedLogins/{ip} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read, write: if true;  // Public access for login rate limiting
+    }
+    
+    match /rateLimits/{email} {
+      allow read, write: if true;  // Public access for login rate limiting
+    }
+
+    // ===== USER ACCESS RULES =====
+    // Allow users to read/write their own document
+    // Allow reading other user docs only for admin role
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow read, update: if request.auth != null && request.auth.uid == userId;
+      allow read, update, delete: if request.auth != null 
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
     // ===== REPORT DATA COLLECTIONS =====
+    // All these require authentication but no specific role checks
     match /shipments/{document=**} {
       allow read, write: if request.auth != null;
     }
@@ -24,10 +41,14 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
     
-    // Default deny all other collections
+    match /dashboardMetrics/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ===== DEFAULT DENY ALL =====
+    // Deny access to any other collections not explicitly defined above
     match /{document=**} {
       allow read, write: if false;
     }
-
   }
 }

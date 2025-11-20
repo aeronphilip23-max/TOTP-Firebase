@@ -25,11 +25,11 @@ export async function POST(request: NextRequest) {
     // Verify the ID token
     const decodedToken = await getAuth().verifyIdToken(idToken)
     const uid = decodedToken.uid
-
+    
     // Get the user
     const user = await getAuth().getUser(uid)
     
-    // Check if MFA is enrolled - safer TypeScript approach
+    // Check if MFA is enrolled
     const hasMFA = user.multiFactor?.enrolledFactors && user.multiFactor.enrolledFactors.length > 0
     
     if (hasMFA) {
@@ -40,9 +40,16 @@ export async function POST(request: NextRequest) {
         },
       })
       
+      // CRITICAL: Create a new custom token immediately after disabling MFA
+      // This prevents token expiration issues
+      const newCustomToken = await getAuth().createCustomToken(uid)
+      
+      console.log('✅ MFA disabled successfully, new token generated')
+      
       return NextResponse.json({ 
         success: true, 
-        message: 'MFA disabled successfully' 
+        message: 'MFA disabled successfully',
+        customToken: newCustomToken // Send the new token to client
       })
     } else {
       return NextResponse.json({ 
