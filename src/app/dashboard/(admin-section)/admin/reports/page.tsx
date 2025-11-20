@@ -1,7 +1,9 @@
 "use client"
 
-import { BarChart3, X, Loader2 } from "lucide-react"
-import { useState } from "react"
+import { BarChart3, X, Loader2, FileText, Download } from "lucide-react"
+import { useState, useEffect } from "react"
+import { db } from "@/src/lib/firebase"
+import { collection, getDocs, query, orderBy, limit } from "firebase/firestore"
 
 function getUniqueTitleWithNumber(title: string, existingReports: any[]): string {
   const baseTitles = new Map<string, number>();
@@ -16,6 +18,28 @@ function getUniqueTitleWithNumber(title: string, existingReports: any[]): string
   return title;
 }
 
+// PDF Generation Handler
+const handlePDFGeneration = (htmlContent: string, filename: string) => {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Please allow popups to generate PDF');
+    return;
+  }
+
+  printWindow.document.write(htmlContent);
+  printWindow.document.close();
+  
+  // Auto-print and close
+  printWindow.onload = function() {
+    setTimeout(() => {
+      printWindow.print();
+      setTimeout(() => {
+        printWindow.close();
+      }, 500);
+    }, 500);
+  };
+};
+
 export default function ReportsTab() {
   const [showGenerateReportModal, setShowGenerateReportModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState("")
@@ -26,6 +50,33 @@ export default function ReportsTab() {
   const [reportData, setReportData] = useState<any>(null)
   const [showReportPreview, setShowReportPreview] = useState(false)
   const [recentReports, setRecentReports] = useState<any[]>([])
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null)
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
+  const [selectedDownloadReport, setSelectedDownloadReport] = useState<any>(null)
+
+  // Fetch recent reports from Firestore
+  useEffect(() => {
+    const fetchRecentReports = async () => {
+      try {
+        const reportsRef = collection(db, "reports")
+        const q = query(reportsRef, orderBy("createdAt", "desc"), limit(5))
+        const snapshot = await getDocs(q)
+        const reports = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          name: doc.data().title || doc.data().name,
+          date: doc.data().createdAt?.toDate().toISOString().split("T")[0] || new Date().toISOString().split("T")[0],
+          size: doc.data().size || "~1.2 MB",
+          type: doc.data().type,
+          format: doc.data().format || "CSV",
+        }))
+        setRecentReports(reports)
+      } catch (error) {
+        console.error("Error fetching recent reports:", error)
+      }
+    }
+
+    fetchRecentReports()
+  }, [])
 
   const handleGenerateReport = async () => {
     if (!selectedReportType) {
@@ -56,32 +107,10 @@ export default function ReportsTab() {
         throw new Error(error.error || "Failed to generate report")
       }
 
-      if (selectedFormat === "CSV") {
-        // Download CSV directly
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-      } else if (selectedFormat === "PDF") {
-        // Download PDF directly
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-      }
-
+      // Add to recent reports with unique title
       const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
       const newReport = {
+        id: `temp-${Date.now()}`,
         name: uniqueTitle,
         date: new Date().toISOString().split("T")[0],
         size: "~1.2 MB",
@@ -93,6 +122,36 @@ export default function ReportsTab() {
         return updated.slice(0, 5);
       });
 
+      // Handle different formats
+      if (selectedFormat === "CSV") {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else if (selectedFormat === "PDF") {
+        // For PDF, the API now returns JSON with HTML content
+        const result = await response.json();
+        if (result.html) {
+          handlePDFGeneration(result.html, result.filename);
+        } else {
+          // Fallback to blob download if HTML is not available
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }
+      }
+
       setShowGenerateReportModal(false)
     } catch (error: any) {
       console.error("Error generating report:", error)
@@ -102,11 +161,75 @@ export default function ReportsTab() {
     }
   }
 
+  const handleDownloadReport = async (report: any) => {
+    setDownloadingReportId(report.id);
+    try {
+      // Regenerate the report when downloading
+      const response = await fetch("/api/reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reportType: report.type,
+          dateRange: "Last 30 days",
+          format: report.format || "CSV",
+          reportTitle: report.name,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download report");
+      }
+
+      // Handle different formats for download
+      if (report.format === "PDF") {
+        // For PDF, use HTML generation
+        const result = await response.json();
+        if (result.html) {
+          handlePDFGeneration(result.html, result.filename);
+        } else {
+          // Fallback to blob download
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${report.name.replace(/ /g, "_")}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }
+      } else {
+        // For CSV, use blob download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const extension = (report.format || "CSV").toLowerCase();
+        a.download = `${report.name.replace(/ /g, "_")}.${extension}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+      
+      // Show success modal
+      setSelectedDownloadReport({ ...report, success: true });
+      setShowDownloadModal(true);
+    } catch (error) {
+      console.error("Error downloading report:", error);
+      setSelectedDownloadReport({ ...report, error: "Error downloading report" });
+      setShowDownloadModal(true);
+    } finally {
+      setDownloadingReportId(null);
+    }
+  }
+
   return (
     <>
       <div className="space-y-6">
         <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)]">Generate Reports</h2>
 
+        {/* Generate Reports Section */}
         <div className="grid md:grid-cols-3 gap-6">
           {[
             { title: "Shipment Analysis", description: "Comprehensive analysis of all shipment data and trends" },
@@ -134,6 +257,57 @@ export default function ReportsTab() {
               </button>
             </div>
           ))}
+        </div>
+
+        {/* Recent Reports Section - Added to match staff design */}
+        <div>
+          <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Recent Reports</h2>
+          <div className="bg-white rounded-lg border border-[oklch(0.88_0_0)]">
+            {recentReports.map((report, index) => (
+              <div
+                key={report.id || `${report.name}-${report.date}-${index}`}
+                className={`flex items-center justify-between p-4 ${
+                  index !== recentReports.length - 1 ? "border-b border-[oklch(0.88_0_0)]" : ""
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <FileText className="h-8 w-8 text-[oklch(0.68_0.19_35)]" />
+                  <div>
+                    <h3 className="font-medium text-[oklch(0.18_0.08_250)]">{report.name}</h3>
+                    <p className="text-sm text-[oklch(0.45_0_0)]">
+                      {report.date} • {report.size}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setSelectedDownloadReport(report)
+                    setShowDownloadModal(true)
+                  }}
+                  disabled={downloadingReportId === report.id}
+                  className="flex items-center gap-2 px-4 py-2 text-[oklch(0.68_0.19_35)] hover:bg-[oklch(0.96_0_0)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {downloadingReportId === report.id ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Downloading
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-5 w-5" />
+                      Download
+                    </>
+                  )}
+                </button>
+              </div>
+            ))}
+            {recentReports.length === 0 && (
+              <div className="p-8 text-center text-[oklch(0.45_0_0)]">
+                <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>No recent reports generated yet</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -260,6 +434,75 @@ export default function ReportsTab() {
               >
                 Download as CSV
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Download Report Modal */}
+      {showDownloadModal && selectedDownloadReport && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">
+                {selectedDownloadReport.success ? "Download Complete" : selectedDownloadReport.error ? "Download Error" : "Download Report"}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowDownloadModal(false)
+                  setSelectedDownloadReport(null)
+                }}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              {selectedDownloadReport.error ? (
+                <p className="text-sm text-red-600">{selectedDownloadReport.error}</p>
+              ) : selectedDownloadReport.success ? (
+                <div className="text-center">
+                  <div className="text-green-600 mb-2">✓</div>
+                  <p className="text-sm text-[oklch(0.45_0_0)]">
+                    Report "{selectedDownloadReport.name}" has been downloaded successfully.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-sm text-[oklch(0.45_0_0)] mb-4">
+                    Download report: <strong>{selectedDownloadReport.name}</strong>
+                  </p>
+                  <p className="text-sm text-[oklch(0.45_0_0)]">
+                    Type: {selectedDownloadReport.type}
+                  </p>
+                  <p className="text-sm text-[oklch(0.45_0_0)]">
+                    Date: {selectedDownloadReport.date}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowDownloadModal(false)
+                  setSelectedDownloadReport(null)
+                }}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                {selectedDownloadReport.success || selectedDownloadReport.error ? "Close" : "Cancel"}
+              </button>
+              {!selectedDownloadReport.success && !selectedDownloadReport.error && (
+                <button
+                  onClick={() => {
+                    handleDownloadReport(selectedDownloadReport)
+                    setShowDownloadModal(false)
+                  }}
+                  className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors flex items-center justify-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </button>
+              )}
             </div>
           </div>
         </div>

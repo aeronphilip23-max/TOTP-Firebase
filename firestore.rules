@@ -1,52 +1,77 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===== PUBLIC RATE LIMIT ACCESS (Required for login functionality) =====
-    // Allow public read/write access to rate limit collections for login security
-    // This is necessary because users aren't authenticated during login attempts
-    match /failedLogins/{ip} {
-      allow read, write: if true;  // Public access for login rate limiting
+    
+    // ===== HELPER FUNCTIONS =====
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
-    match /rateLimits/{email} {
-      allow read, write: if true;  // Public access for login rate limiting
-    }
-
-    // ===== USER ACCESS RULES =====
-    // Allow users to read/write their own document
-    // Allow reading other user docs only for admin role
-    match /users/{userId} {
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow read, update: if request.auth != null && request.auth.uid == userId;
-      allow read, update, delete: if request.auth != null 
+    function isAdmin() {
+      return isAuthenticated() 
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
+    // ===== MOCK DELIVERIES =====
+    // Allow server-side writes via Admin SDK (bypasses rules)
+    // Client-side still requires auth
+    match /mockDeliveries/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // ===== PUBLIC RATE LIMIT ACCESS =====
+    // These MUST be public for login rate limiting to work
+    match /failedLogins/{ip} {
+      allow read, write: if true;
+    }
+    
+    match /rateLimits/{email} {
+      allow read, write: if true;
+    }
+    
+    // ===== USER ACCESS RULES =====
+    match /users/{userId} {
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow read, update: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+    
     // ===== REPORT DATA COLLECTIONS =====
-    // All these require authentication but no specific role checks
+    // Use {document=**} to match ALL documents and subcollections
     match /shipments/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     
     match /inventory/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     
+    // KEY FIX: Use {document=**} for reports to match subcollections
     match /reports/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
     
     match /mockDeliveries/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAuthenticated();
     }
     
     match /dashboardMetrics/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
-
+    
+    // ===== NEW: SCHEDULED EVENTS COLLECTION =====
+    match /scheduledEvents/{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+    
     // ===== DEFAULT DENY ALL =====
-    // Deny access to any other collections not explicitly defined above
     match /{document=**} {
       allow read, write: if false;
     }

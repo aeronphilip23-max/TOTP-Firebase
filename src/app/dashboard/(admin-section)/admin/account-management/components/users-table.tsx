@@ -42,9 +42,9 @@ export default function UsersTable({
     setActiveDropdown(null)
   }
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (userToDelete) {
-      onUserAction("delete", userToDelete.id)
+      await onUserAction("delete", userToDelete.id)
       setDeleteModalOpen(false)
       setUserToDelete(null)
     }
@@ -216,14 +216,15 @@ export default function UsersTable({
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
               <p className="text-sm text-red-700">
                 Are you sure you want to delete <strong>{userToDelete.name}</strong> ({userToDelete.email})? 
-                This will permanently remove their account and all associated data.
+                This will permanently remove their account and all associated data from both Authentication and Firestore.
               </p>
             </div>
 
             <div className="flex gap-3">
               <button
                 onClick={cancelDelete}
-                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
+                disabled={actionLoading === userToDelete.id}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -237,7 +238,7 @@ export default function UsersTable({
                 ) : (
                   <Trash2 className="h-4 w-4" />
                 )}
-                {actionLoading === userToDelete.id ? "Deleting..." : "Delete User"}
+                {actionLoading === userToDelete.id ? "Deleting..." : "Delete Account"}
               </button>
             </div>
           </div>

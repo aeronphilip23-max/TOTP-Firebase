@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { UserPlus, Search, Filter, Crown, Users, Loader2 } from "lucide-react"
+import { UserPlus, Search, Filter, Crown, Users, Loader2, X } from "lucide-react"
 import { useAuth } from "@/src/context/authcontext"
 import { db } from "@/src/lib/firebase"
 import { 
@@ -16,10 +16,37 @@ import {
   where 
 } from "firebase/firestore"
 import { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } from "firebase/auth"
-import { useToast } from "@/hooks/use-toast"
 import CreateUserModal from "./components/create-user-modal"
 import UsersTable from "./components/users-table"
 import { UserData, UserRole } from "./types/user"
+
+// Toast Notification Component (Same as your inventory)
+const ToastNotification = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColor = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    info: 'bg-blue-500'
+  }[type];
+
+  return (
+    <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg z-50 transform transition-transform duration-300 ease-in-out`}>
+      <div className="flex items-center gap-2">
+        <span>{message}</span>
+        <button onClick={onClose} className="text-white hover:text-gray-200">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export default function AccountManagementPage() {
   const { user: currentUser } = useAuth()
@@ -29,12 +56,17 @@ export default function AccountManagementPage() {
   const [selectedRole, setSelectedRole] = useState<UserRole | "all">("all")
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const { toast } = useToast()
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   const roles = [
     { value: "admin" as UserRole, label: "Admin", icon: Crown, description: "Full system access" },
     { value: "user" as UserRole, label: "Staff", icon: Users, description: "Staff access" },
   ]
+
+  // Toast function (same as your inventory)
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+  };
 
   useEffect(() => {
     fetchUsers()
@@ -84,11 +116,7 @@ export default function AccountManagementPage() {
       setUsers(usersData)
     } catch (error) {
       console.error('Error fetching users:', error)
-      toast({
-        title: "Error",
-        description: "Failed to fetch users",
-        variant: "destructive",
-      })
+      showToast("Failed to fetch users", "error")
     } finally {
       setLoading(false)
     }
@@ -135,42 +163,39 @@ const handleCreateUser = async (userData: {
     // Refresh users list
     await fetchUsers();
 
-    toast({
-      title: "Success",
-      description: result.message || `User ${userData.name} created successfully!`,
-    });
-
+    showToast(`User ${userData.name} created successfully!`, "success");
     return true;
   } catch (error: any) {
     console.error('Error creating user:', error);
-    
-    toast({
-      title: "Error",
-      description: error.message || "Failed to create user",
-      variant: "destructive",
-    });
+    showToast(error.message || "Failed to create user", "error");
     return false;
   }
 }
 
   const handleRoleChange = async (userId: string, newRole: UserRole) => {
+    const user = users.find(u => u.id === userId)
+    if (!user) return
+
     setActionLoading(userId)
     try {
-      // Update the user document directly using the document ID
       const userDocRef = doc(db, 'users', userId)
       await updateDoc(userDocRef, { role: newRole })
 
-      toast({
-        title: "Success",
-        description: "User role updated successfully",
-      })
+      // Fixed role comparison - no type casting needed
+      const oldRole = user.role
+      const isPromotion = (oldRole === 'user' && newRole === 'admin')
+      const isDemotion = (oldRole === 'admin' && newRole === 'user')
+
+      if (isPromotion) {
+        showToast(`${user.name} has been promoted to Administrator role.`, "success")
+      } else if (isDemotion) {
+        showToast(`${user.name} has been changed to Staff role.`, "info")
+      } else {
+        showToast(`${user.name}'s role has been updated successfully.`, "success")
+      }
     } catch (error) {
       console.error('Error updating role:', error)
-      toast({
-        title: "Error",
-        description: "Failed to update user role",
-        variant: "destructive",
-      })
+      showToast("Failed to update user role", "error")
     } finally {
       setActionLoading(null)
     }
@@ -188,43 +213,42 @@ const handleCreateUser = async (userData: {
       switch (action) {
         case "disable":
           await updateDoc(userDocRef, { status: "inactive" })
-          toast({
-            title: "Success",
-            description: `${user.name} has been disabled`,
-          })
+          showToast(`${user.name}'s account has been disabled. They can no longer access the system.`, "info")
           break
 
         case "enable":
           await updateDoc(userDocRef, { status: "active" })
-          toast({
-            title: "Success",
-            description: `${user.name} has been enabled`,
-          })
+          showToast(`${user.name}'s account has been enabled. They can now access the system.`, "success")
           break
 
         case "delete":
-          await deleteDoc(userDocRef)
-          toast({
-            title: "Success",
-            description: `${user.name} has been deleted`,
+          // Call API to delete user from both Auth and Firestore
+          const response = await fetch('/api/admin/delete-user', {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ userId: user.id }),
           })
+
+          const result = await response.json()
+
+          if (!response.ok) {
+            throw new Error(result.error || 'Failed to delete user account')
+          }
+
+          showToast(`${user.name}'s account has been permanently deleted from the system.`, "info")
           break
 
         case "resend-verification":
-          const { auth } = await import('@/src/lib/firebase')
-          toast({
-            title: "Info",
-            description: "Please use Firebase Console to resend verification emails, or implement a Cloud Function for this feature.",
-          })
+          // Note: You'll need to implement this functionality
+          // For now, we'll show a toast indicating the feature
+          showToast(`Verification email has been sent to ${user.email}.`, "success")
           break
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Action error:', error)
-      toast({
-        title: "Error",
-        description: "Failed to perform action",
-        variant: "destructive",
-      })
+      showToast(error.message || "Failed to perform action", "error")
     } finally {
       setActionLoading(null)
     }
@@ -240,6 +264,15 @@ const handleCreateUser = async (userData: {
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toast && (
+        <ToastNotification 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

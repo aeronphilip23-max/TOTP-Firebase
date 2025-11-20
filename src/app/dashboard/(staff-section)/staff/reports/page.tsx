@@ -110,42 +110,37 @@ export default function ReportsPage() {
         throw new Error(error.error || "Failed to generate report")
       }
 
-      // Add to recent reports from Firestore with duplicate title handling
+      // Get the blob content directly
+      const blob = await response.blob();
+
+      // Store the report in Firestore (you'll need to implement this)
+      // For now, just create a report object for recent reports
       const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
       const newReport = {
+        id: `temp-${Date.now()}`,
         name: uniqueTitle,
         date: new Date().toISOString().split("T")[0],
         size: "~1.2 MB",
         type: selectedReportType,
+        format: selectedFormat,
+        // Store the blob content if needed, or just regenerate on download
       }
+      
       setRecentReports(prevReports => {
         const updated = [newReport, ...prevReports];
         return updated.slice(0, 5);
       })
 
-      if (selectedFormat === "CSV") {
-        // Download CSV directly
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-      } else if (selectedFormat === "PDF") {
-        // Download PDF directly
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
-      }
+      // Download the file
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      const extension = selectedFormat.toLowerCase()
+      a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.${extension}`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
 
       setShowGenerateModal(false)
     } catch (error: any) {
@@ -157,61 +152,57 @@ export default function ReportsPage() {
   }
 
   const handleDownloadReport = async (report: any) => {
-    if (!report.id || !report.content) {
-      setSelectedDownloadReport({ ...report, error: "Report data not available for download" })
-      setShowDownloadModal(true)
-      return
-    }
-
-    setDownloadingReportId(report.id)
+    setDownloadingReportId(report.id);
     try {
-      // Determine file type based on report format or regenerate from API if needed
-      // Since recent reports store CSV content, we need to fetch the actual format
+      // Always regenerate the report when downloading from recent reports
       const response = await fetch("/api/reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reportType: report.type,
-          dateRange: "Last 30 days",
+          dateRange: "Last 30 days", // Use the original date range if stored
           format: report.format || "CSV",
           reportTitle: report.name,
         }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error("Failed to download report")
+        throw new Error("Failed to download report");
       }
 
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      const extension = report.format === "PDF" ? "pdf" : "csv"
-      a.download = `${report.name.replace(/ /g, "_")}.${extension}`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const extension = (report.format || "CSV").toLowerCase();
+      a.download = `${report.name.replace(/ /g, "_")}.${extension}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
       
       // Show success modal
-      setSelectedDownloadReport({ ...report, success: true })
-      setShowDownloadModal(true)
+      setSelectedDownloadReport({ ...report, success: true });
+      setShowDownloadModal(true);
     } catch (error) {
-      console.error("Error downloading report:", error)
-      setSelectedDownloadReport({ ...report, error: "Error downloading report" })
-      setShowDownloadModal(true)
+      console.error("Error downloading report:", error);
+      setSelectedDownloadReport({ 
+        ...report, 
+        error: "Error downloading report. Please try regenerating the report." 
+      });
+      setShowDownloadModal(true);
     } finally {
-      setDownloadingReportId(null)
+      setDownloadingReportId(null);
     }
   }
 
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className="space-y-6"> {/* Changed from max-w-6xl to full width */}
       <h1 className="text-3xl font-bold text-[oklch(0.18_0.08_250)]">Reports</h1>
 
       {/* Generate reports */}
       <div>
-        <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Generate Report</h2>
+        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Generate Report</h2> {/* Changed to text-2xl to match admin */}
         <div className="grid md:grid-cols-3 gap-6">
           {reportTypes.map((report) => {
             const Icon = report.icon
@@ -239,11 +230,11 @@ export default function ReportsPage() {
 
       {/* Recent reports */}
       <div>
-        <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Recent Reports</h2>
+        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Recent Reports</h2> {/* Changed to text-2xl to match admin */}
         <div className="bg-white rounded-lg border border-[oklch(0.88_0_0)]">
           {recentReports.map((report, index) => (
             <div
-              key={report.name}
+              key={report.id || `${report.name}-${report.date}-${index}`}
               className={`flex items-center justify-between p-4 ${
                 index !== recentReports.length - 1 ? "border-b border-[oklch(0.88_0_0)]" : ""
               }`}
@@ -279,6 +270,12 @@ export default function ReportsPage() {
               </button>
             </div>
           ))}
+          {recentReports.length === 0 && (
+            <div className="p-8 text-center text-[oklch(0.45_0_0)]">
+              <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p>No recent reports generated yet</p>
+            </div>
+          )}
         </div>
       </div>
 

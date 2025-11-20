@@ -24,6 +24,34 @@ const STOCK_LEVELS = {
   "In Stock": (qty: number) => qty >= 10 && qty <= 100,
 }
 
+// Toast Notification Component
+const ToastNotification = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColor = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    info: 'bg-blue-500'
+  }[type];
+
+  return (
+    <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg z-50 transform transition-transform duration-300 ease-in-out`}>
+      <div className="flex items-center gap-2">
+        <span>{message}</span>
+        <button onClick={onClose} className="text-white hover:text-gray-200">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const EllipsisMenu = ({ material, onEdit, onDelete }: { material: any, onEdit: () => void, onDelete: () => void }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<'bottom' | 'top'>('bottom');
@@ -112,6 +140,7 @@ export default function InventoryTab() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All Categories")
   const [selectedStockLevel, setSelectedStockLevel] = useState("All")
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
 
   const [newMaterial, setNewMaterial] = useState({
     name: "",
@@ -146,6 +175,10 @@ export default function InventoryTab() {
     unit?: string
     location?: string
   }>>([])
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+  };
 
   const getMaterials = async () => {
     const querySnapshot = await getDocs(collection(db, "inventory"));
@@ -191,13 +224,13 @@ export default function InventoryTab() {
 
     const handleAddMaterial = async () => {
     if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
-      alert("Please fill in all fields")
+      showToast("Please fill in all fields", "error");
       return
     }
 
     const quantity = Number.parseInt(newMaterial.quantity);
     if (quantity < 0) {
-      alert("Quantity cannot be negative");
+      showToast("Quantity cannot be negative", "error");
       return;
     }
 
@@ -210,27 +243,33 @@ export default function InventoryTab() {
       location: newMaterial.location,
     }
 
-    await setDoc(doc(db, "inventory", material.id), {
-      name: material.name,
-      category: material.category,
-      quantity: material.quantity,
-      unit: material.unit,
-      location: material.location,
-    });
+    try {
+      await setDoc(doc(db, "inventory", material.id), {
+        name: material.name,
+        category: material.category,
+        quantity: material.quantity,
+        unit: material.unit,
+        location: material.location,
+      });
 
-    // FIX: Update state immediately instead of calling getMaterials()
-    const updatedAllMaterials = [...allMaterials, material];
-    setAllMaterials(updatedAllMaterials);
-    
-    // FIX: Also update the filtered materials if it passes current filters
-    const passesFilters = applyFiltersToSingleItem(material, searchQuery, selectedCategory, selectedStockLevel);
-    if (passesFilters) {
-      const updatedMaterials = [...materials, material];
-      setMaterials(updatedMaterials);
+      // FIX: Update state immediately instead of calling getMaterials()
+      const updatedAllMaterials = [...allMaterials, material];
+      setAllMaterials(updatedAllMaterials);
+      
+      // FIX: Also update the filtered materials if it passes current filters
+      const passesFilters = applyFiltersToSingleItem(material, searchQuery, selectedCategory, selectedStockLevel);
+      if (passesFilters) {
+        const updatedMaterials = [...materials, material];
+        setMaterials(updatedMaterials);
+      }
+
+      setShowAddMaterialModal(false)
+      setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+      showToast(`Material "${material.name}" added successfully!`);
+    } catch (error) {
+      showToast("Failed to add material", "error");
+      console.error("Error adding material:", error);
     }
-
-    setShowAddMaterialModal(false)
-    setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
   }
 
   // Add this helper function
@@ -276,17 +315,25 @@ const openDeleteModal = (material: any) => {
 
 const handleEditMaterial = async () => {
   if (!selectedMaterial?.id || !editMaterial.name || !editMaterial.category || !editMaterial.quantity || !editMaterial.unit) {
-    alert("Please fill in all fields")
+    showToast("Please fill in all fields", "error");
     return
   }
 
   const quantity = Number.parseInt(editMaterial.quantity);
   if (quantity < 0) {
-    alert("Quantity cannot be negative");
+    showToast("Quantity cannot be negative", "error");
     return;
   }
 
   try {
+    // Track changes for the notification
+    const changes = [];
+    if (selectedMaterial.name !== editMaterial.name) changes.push("name");
+    if (selectedMaterial.category !== editMaterial.category) changes.push("category");
+    if (selectedMaterial.quantity !== quantity) changes.push("quantity");
+    if (selectedMaterial.unit !== editMaterial.unit) changes.push("unit");
+    if (selectedMaterial.location !== editMaterial.location) changes.push("location");
+
     await updateDoc(doc(db, "inventory", selectedMaterial.id), {
       name: editMaterial.name,
       category: editMaterial.category,
@@ -326,9 +373,15 @@ const handleEditMaterial = async () => {
     setShowEditMaterialModal(false);
     setSelectedMaterial(null);
     setEditMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" });
+    
+    if (changes.length > 0) {
+      showToast(`Material updated! Changed: ${changes.join(", ")}`, "info");
+    } else {
+      showToast("No changes were made", "info");
+    }
   } catch (err: any) {
     console.error("Failed to update material:", err);
-    alert("Failed to update material: " + (err?.message || String(err)));
+    showToast("Failed to update material", "error");
   }
 }
 
@@ -347,10 +400,11 @@ const handleDeleteMaterial = async () => {
     setMaterials(updatedMaterials);
     
     setShowDeleteModal(false);
+    showToast(`Material "${selectedMaterial.name}" deleted successfully!`, "info");
     setSelectedMaterial(null);
   } catch (err: any) {
     console.error("Failed to delete material:", err);
-    alert("Failed to delete material: " + (err?.message || String(err)));
+    showToast("Failed to delete material", "error");
   }
 }
 
@@ -377,6 +431,15 @@ const handleDeleteMaterial = async () => {
   return (
     <>
       <div className="space-y-6">
+        {/* Toast Notification */}
+        {toast && (
+          <ToastNotification 
+            message={toast.message} 
+            type={toast.type} 
+            onClose={() => setToast(null)} 
+          />
+        )}
+
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)]">Manage Inventory</h2>
           <button

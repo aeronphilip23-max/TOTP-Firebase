@@ -64,6 +64,12 @@ const Login = () => {
     }
   };
 
+  // Email validation function
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
   // Function to set ID token and user role as cookies for middleware
   const setAuthCookies = async (user: any, role: string = 'user') => {
     try {
@@ -173,12 +179,18 @@ const Login = () => {
     }
   };
 
-  // FIXED HANDLE SUBMIT - REMOVED LOCALSTORAGE FALLBACK
+  // FIXED HANDLE SUBMIT - WITH PROPER EMAIL VALIDATION AND BRUTE FORCE LOGIC
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
     if (!email) {
       setError("Please enter your email address.");
+      return;
+    }
+
+    // ✅ ADDED: Validate email format with @ symbol
+    if (!validateEmail(email)) {
+      setError("Please enter a valid email address with @ symbol.");
       return;
     }
 
@@ -252,14 +264,20 @@ const Login = () => {
     } catch (err: any) {
       console.log("Login error:", err);
       
-      // Handle ALL authentication errors that indicate wrong credentials
-      if (err?.code === "auth/wrong-password" || 
-          err?.code === "auth/user-not-found" || 
-          err?.code === "auth/invalid-credential" ||
-          err?.code === "auth/too-many-requests") {
+      // ✅ FIXED: Handle authentication errors with proper logic
+      if (err?.code === "auth/user-not-found") {
+        // Email doesn't exist in the system - show unauthorized message
+        setError("Not authorized email. Please check your email address.");
+        await trackFailedLogin(email, 'auth/user-not-found');
         
+        
+      } else if (err?.code === "auth/wrong-password" || 
+                err?.code === "auth/invalid-credential" ||
+                err?.code === "auth/too-many-requests") {
+        
+        // ✅ ONLY track failed attempts for authorized emails (wrong password on existing account)
         try {
-          const newStatus = await trackFailedLogin(email);
+          const newStatus = await trackFailedLogin(email, err.code);
           
           console.log("New rate limit status:", newStatus);
           
@@ -379,6 +397,12 @@ const Login = () => {
   const handleForgotPassword = async () => {
     if (!resetEmailValue.trim()) {
       setError("Please enter your email address.");
+      return;
+    }
+
+    // ✅ ADDED: Validate email format for forgot password
+    if (!validateEmail(resetEmailValue.trim())) {
+      setError("Please enter a valid email address with @ symbol.");
       return;
     }
 

@@ -37,12 +37,6 @@ export default function LandingPage() {
                 Unlock unequalled business performance with real-time insights, automation, an expanding marketplace,
                 and digital tracking. Join the logistics revolution in the making.
               </p>
-              <button
-                onClick={() => navigate.push("/auth/login")}
-                className="px-8 py-4 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium text-lg"
-              >
-                Get Started
-              </button>
             </div>
 
             {/* Wireframe Illustration */}

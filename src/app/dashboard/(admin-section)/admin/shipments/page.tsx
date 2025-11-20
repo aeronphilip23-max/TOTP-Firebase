@@ -13,6 +13,34 @@ interface Material {
   unit: string;
 }
 
+// Toast Notification Component
+const ToastNotification = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColor = {
+    success: 'bg-green-500',
+    error: 'bg-red-500',
+    info: 'bg-blue-500'
+  }[type];
+
+  return (
+    <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg z-50 transform transition-transform duration-300 ease-in-out`}>
+      <div className="flex items-center gap-2">
+        <span>{message}</span>
+        <button onClick={onClose} className="text-white hover:text-gray-200">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export default function ShipmentsTab() {
   const [showAddShipmentModal, setShowAddShipmentModal] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
@@ -22,6 +50,10 @@ export default function ShipmentsTab() {
   const [sortBy, setSortBy] = useState("date")
   const [sortOrder, setSortOrder] = useState("descending")
   const [materials, setMaterials] = useState<Material[]>([])
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [showDelayReasonModal, setShowDelayReasonModal] = useState(false)
+  const [delayReason, setDelayReason] = useState("")
+  const [selectedShipmentForDelay, setSelectedShipmentForDelay] = useState<any>(null)
 
   const [newShipment, setNewShipment] = useState({
     destination: "",
@@ -42,6 +74,7 @@ export default function ShipmentsTab() {
     lalamoveOrderId?: string | null
     quantity?: number
     materialId?: string
+    delayReason?: string
   }>>([])
 
   const [allShipments, setAllShipments] = useState<Array<{
@@ -53,7 +86,12 @@ export default function ShipmentsTab() {
     lalamoveOrderId?: string | null
     quantity?: number
     materialId?: string
+    delayReason?: string
   }>>([])
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+  };
 
   // Load materials from inventory
   const getMaterials = async () => {
@@ -71,6 +109,7 @@ export default function ShipmentsTab() {
       setMaterials(materialsList)
     } catch (error) {
       console.error("Error loading materials:", error)
+      showToast("Failed to load materials", "error");
     }
   }
 
@@ -99,7 +138,7 @@ export default function ShipmentsTab() {
       setShipments(sorted as any);
     } catch (error) {
       console.error("Error loading shipments:", error);
-      alert("Failed to load shipments");
+      showToast("Failed to load shipments", "error");
     }
   }
 
@@ -198,13 +237,13 @@ export default function ShipmentsTab() {
 
   const handleAddShipment = async () => {
     if (!newShipment.destination || !newShipment.selectedMaterialId || !newShipment.quantity || !newShipment.eta) {
-      alert("Please fill in all fields")
+      showToast("Please fill in all fields", "error");
       return
     }
 
     const selectedMaterial = getSelectedMaterial()
     if (!selectedMaterial) {
-      alert("Selected material not found")
+      showToast("Selected material not found", "error");
       return
     }
 
@@ -320,9 +359,10 @@ export default function ShipmentsTab() {
       
       setShowAddShipmentModal(false)
       setNewShipment({ destination: "", selectedMaterialId: "", quantity: "", eta: "", deliveryAddress: "", deliveryLat: undefined, deliveryLng: undefined })
+      showToast(`Shipment "${shipmentId}" created successfully!`);
     } catch (error: any) {
       console.error("Error creating shipment:", error);
-      alert(error.message || "Failed to create shipment");
+      showToast(error.message || "Failed to create shipment", "error");
     } finally {
       setIsCreating(false)
     }
@@ -332,16 +372,17 @@ export default function ShipmentsTab() {
     shipmentId: string,
     lalamoveId: string | null | undefined,
     newStatus: string,
-    shipment: typeof shipments[0]
+    shipment: typeof shipments[0],
+    delayReason?: string
   ) => {
     // Check if already cancelled
     if (shipment.status === "CANCELED") {
-      alert("Cannot change status of a cancelled shipment");
+      showToast("Cannot change status of a cancelled shipment", "error");
       return
     }
 
     if (!lalamoveId) {
-      alert("Cannot update delivery status because shipment has no Lalamove order ID.");
+      showToast("Cannot update delivery status because shipment has no Lalamove order ID.", "error");
       return;
     }
 
@@ -367,18 +408,31 @@ export default function ShipmentsTab() {
       });
 
       // Update shipment document status to match
-      await updateDoc(doc(db, "shipments", shipmentId), {
+      const updateData: any = {
         status: newStatus,
         updatedAt: now
-      });
+      };
+
+      // If status is DELAYED and delay reason is provided, store it
+      if (newStatus === "DELAYED" && delayReason) {
+        updateData.delayReason = delayReason;
+      }
+
+      // If changing from DELAYED to another status, clear the delay reason
+      if (shipment.status === "DELAYED" && newStatus !== "DELAYED") {
+        updateData.delayReason = null;
+      }
+
+      await updateDoc(doc(db, "shipments", shipmentId), updateData);
 
       console.log(`Updated ${shipmentId} and mock delivery ${lalamoveId} to ${newStatus}`);
       
       // Refresh data
       await getShipments();
+      showToast(`Shipment status updated to ${newStatus}`, "success");
     } catch (err: any) {
       console.error("Failed to update status:", err);
-      alert("Failed to update status: " + (err?.message || String(err)));
+      showToast("Failed to update status: " + (err?.message || String(err)), "error");
     }
   }
 
@@ -391,7 +445,46 @@ export default function ShipmentsTab() {
       return;
     }
 
+    if (newStatus === 'DELAYED') {
+      setSelectedShipmentForDelay(shipment);
+      setDelayReason(shipment.delayReason || "");
+      setShowDelayReasonModal(true);
+      return;
+    }
+
     updateDeliveryStatus(shipment.id, shipment.lalamoveOrderId, newStatus, shipment);
+  }
+
+  const handleDelayReasonSubmit = async () => {
+    if (!delayReason.trim()) {
+      showToast("Please provide a reason for the delay", "error");
+      return;
+    }
+
+    if (selectedShipmentForDelay) {
+      await updateDeliveryStatus(
+        selectedShipmentForDelay.id,
+        selectedShipmentForDelay.lalamoveOrderId,
+        "DELAYED",
+        selectedShipmentForDelay,
+        delayReason.trim()
+      );
+      setShowDelayReasonModal(false);
+      setDelayReason("");
+      setSelectedShipmentForDelay(null);
+    }
+  }
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedDate = new Date(e.target.value);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of day
+    
+    if (selectedDate >= today) {
+      setNewShipment({ ...newShipment, eta: e.target.value });
+    } else {
+      showToast("Please select a date that is today or in the future.", "error");
+    }
   }
 
   const selectedMaterial = getSelectedMaterial()
@@ -400,6 +493,15 @@ export default function ShipmentsTab() {
   return (
     <>
       <div className="space-y-6">
+        {/* Toast Notification */}
+        {toast && (
+          <ToastNotification 
+            message={toast.message} 
+            type={toast.type} 
+            onClose={() => setToast(null)} 
+          />
+        )}
+
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)]">Manage Shipments</h2>
           <button
@@ -437,6 +539,7 @@ export default function ShipmentsTab() {
           ) : (
             shipments.map((shipment) => {
               const isCancelled = shipment.status === "CANCELED"
+              const isDelayed = shipment.status === "DELAYED"
               return (
                 <div
                   key={shipment.id}
@@ -446,11 +549,15 @@ export default function ShipmentsTab() {
                     <div>
                       <h3 className="text-lg font-semibold text-[oklch(0.18_0.08_250)]">{shipment.id}</h3>
                       <p className="text-[oklch(0.45_0_0)]">{shipment.destination}</p>
+                      {isDelayed && shipment.delayReason && (
+                        <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
+                          <p className="text-sm text-orange-800">
+                            <strong>Delay Reason:</strong> {shipment.delayReason}
+                          </p>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {/* {isCancelled && (
-                        // <Lock className="h-5 w-5 text-red-600" />
-                      )} */}
                       <select
                         value={shipment.status ?? 'ASSIGNING_DRIVER'}
                         onChange={(e) => handleStatusChangeWithConfirm(shipment, e.target.value)}
@@ -462,12 +569,15 @@ export default function ShipmentsTab() {
                               ? "bg-blue-100 text-blue-700 border-blue-300"
                               : shipment.status === "CANCELED"
                                 ? "bg-red-100 text-red-700 border-red-300"
-                                : "bg-yellow-100 text-yellow-700 border-yellow-300"
+                                : shipment.status === "DELAYED"
+                                  ? "bg-orange-100 text-orange-700 border-orange-300"
+                                  : "bg-yellow-100 text-yellow-700 border-yellow-300"
                         } ${isCancelled ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <option value="ASSIGNING_DRIVER">Assigning Driver</option>
                         <option value="DRIVER_ASSIGNED">Driver Assigned</option>
                         <option value="PICKED_UP">Picked Up</option>
+                        <option value="DELAYED">Delayed</option>
                         <option value="COMPLETED">Completed</option>
                         <option value="CANCELED">Canceled</option>
                       </select>
@@ -485,6 +595,10 @@ export default function ShipmentsTab() {
                     <div>
                       <span className="text-[oklch(0.45_0_0)]">Lalamove ID:</span>
                       <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium">{shipment.lalamoveOrderId || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[oklch(0.45_0_0)]">Status:</span>
+                      <span className="ml-2 text-[oklch(0.18_0.08_250)] font-medium capitalize">{shipment.status?.toLowerCase().replace(/_/g, ' ')}</span>
                     </div>
                   </div>
                 </div>
@@ -556,7 +670,7 @@ export default function ShipmentsTab() {
                 <input
                   type="date"
                   value={newShipment.eta}
-                  onChange={(e) => setNewShipment({ ...newShipment, eta: e.target.value })}
+                  onChange={handleDateChange}
                   min={new Date().toISOString().split('T')[0]}
                   className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
                 />
@@ -628,6 +742,7 @@ export default function ShipmentsTab() {
                   <option value="ASSIGNING_DRIVER">Assigning Driver</option>
                   <option value="DRIVER_ASSIGNED">Driver Assigned</option>
                   <option value="PICKED_UP">Picked Up</option>
+                  <option value="DELAYED">Delayed</option>
                   <option value="COMPLETED">Completed</option>
                   <option value="CANCELED">Canceled</option>
                 </select>
@@ -661,6 +776,60 @@ export default function ShipmentsTab() {
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delay Reason Modal */}
+      {showDelayReasonModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Delay Reason</h2>
+              <button
+                onClick={() => {
+                  setShowDelayReasonModal(false);
+                  setDelayReason("");
+                  setSelectedShipmentForDelay(null);
+                }}
+                className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-[oklch(0.45_0_0)] text-sm">
+                Please provide the reason for the delay. This information will be included in delayed shipment reports.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Delay Reason *</label>
+                <textarea
+                  value={delayReason}
+                  onChange={(e) => setDelayReason(e.target.value)}
+                  placeholder="e.g., Vehicle breakdown, Traffic congestion, Weather conditions..."
+                  rows={4}
+                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowDelayReasonModal(false);
+                  setDelayReason("");
+                  setSelectedShipmentForDelay(null);
+                }}
+                className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelayReasonSubmit}
+                className="flex-1 px-4 py-2 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors"
+              >
+                Mark as Delayed
               </button>
             </div>
           </div>

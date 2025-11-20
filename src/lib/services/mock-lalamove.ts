@@ -1,5 +1,4 @@
-import { db } from "@/src/lib/firebase";
-import { doc, setDoc } from "firebase/firestore";
+import { getAdminDb } from "@/src/lib/firebase-admin";
 
 export type MockDeliveryStatus = "ASSIGNING_DRIVER" | "DRIVER_ASSIGNED" | "PICKED_UP" | "COMPLETED" | "CANCELED";
 
@@ -54,8 +53,17 @@ export class MockLalamoveService {
       updated_at: new Date().toISOString(),
     };
 
-    // Store in Firestore for persistence
-    await setDoc(doc(db, this.collection, orderId), delivery);
+    try {
+      // Use Admin SDK to store in Firestore (bypasses security rules)
+      const adminDb = getAdminDb();
+      await adminDb.collection(this.collection).doc(orderId).set(delivery);
+      
+      console.log('[MOCK] Successfully created delivery:', orderId);
+    } catch (error) {
+      console.error('[MOCK] Error creating delivery in Firestore:', error);
+      throw new Error('Failed to create mock delivery: ' + (error as Error).message);
+    }
+
     return { id: orderId };
   }
 }

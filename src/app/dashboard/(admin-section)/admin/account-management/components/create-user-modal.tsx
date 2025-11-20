@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { X, Eye, EyeOff, Loader2, Check, X as XIcon } from "lucide-react"
+import { X, Eye, EyeOff, Loader2, Check, X as XIcon, AlertCircle } from "lucide-react"
 import { UserRole } from "../types/user"
 
 interface CreateUserModalProps {
@@ -30,6 +30,51 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [nameError, setNameError] = useState("")
+
+  // Name validation function
+  const validateName = (name: string): { isValid: boolean; error: string } => {
+    if (!name.trim()) {
+      return { isValid: false, error: "Name is required" }
+    }
+
+    // Check if name contains at least one comma
+    if (!name.includes(',')) {
+      return { 
+        isValid: false, 
+        error: "Please use format: Last Name, First Name, M.I. (comma separated)" 
+      }
+    }
+
+    // Split by comma and check if we have at least last name and first name
+    const parts = name.split(',').map(part => part.trim()).filter(part => part.length > 0)
+    
+    if (parts.length < 2) {
+      return { 
+        isValid: false, 
+        error: "Please provide both Last Name and First Name separated by comma" 
+      }
+    }
+
+    // Check if last name and first name are not empty
+    if (parts[0].length === 0 || parts[1].length === 0) {
+      return { 
+        isValid: false, 
+        error: "Last Name and First Name cannot be empty" 
+      }
+    }
+
+    // Optional: Check if names contain only letters, spaces, and common name characters
+    const nameRegex = /^[a-zA-Z\s.'-]+$/
+    if (!nameRegex.test(parts[0]) || !nameRegex.test(parts[1])) {
+      return { 
+        isValid: false, 
+        error: "Names should contain only letters, spaces, and common name characters" 
+      }
+    }
+
+    return { isValid: true, error: "" }
+  }
 
   const generatePassword = () => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
@@ -51,11 +96,31 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
 
   const isPasswordValid = Object.values(passwordChecks).every(Boolean)
   const doPasswordsMatch = formData.password === formData.confirmPassword
-  const canSubmit = formData.name && formData.email && formData.password && isPasswordValid && doPasswordsMatch
+  const nameValidation = validateName(formData.name)
+  const canSubmit = nameValidation.isValid && formData.email && formData.password && isPasswordValid && doPasswordsMatch
+
+  const handleNameChange = (value: string) => {
+    setFormData(prev => ({ ...prev, name: value }))
+    
+    // Validate name in real-time but only show error after user has started typing
+    if (value.trim()) {
+      const validation = validateName(value)
+      setNameError(validation.error)
+    } else {
+      setNameError("")
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
+    // Final validation before submission
+    const finalNameValidation = validateName(formData.name)
+    if (!finalNameValidation.isValid) {
+      setNameError(finalNameValidation.error)
+      return
+    }
+
     if (!isPasswordValid || !doPasswordsMatch) {
       return
     }
@@ -64,13 +129,17 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
 
     try {
       const userData = {
-        ...formData,
-        // Remove confirmPassword from the final data
-        confirmPassword: undefined,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        role: formData.role,
+        sendCredentials: formData.sendCredentials,
+        requireEmailVerification: formData.requireEmailVerification,
       }
 
       const success = await onCreateUser(userData)
       if (success) {
+        // Show success toast (this will be handled by the parent component)
         onClose()
       }
     } catch (error) {
@@ -102,6 +171,14 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
     </div>
   )
 
+  // Format examples for the name input
+  const nameExamples = [
+    "Doe, John",
+    "Smith, Jane Marie",
+    "Garcia, Juan A.",
+    "Chen, Li Wei"
+  ]
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -124,10 +201,34 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
               type="text"
               required
               value={formData.name}
-              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => handleNameChange(e.target.value)}
               placeholder="Doe, John A."
-              className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                nameError 
+                  ? 'border-red-500 focus:ring-red-500' 
+                  : 'border-[oklch(0.88_0_0)] focus:ring-[oklch(0.68_0.19_35)]'
+              }`}
             />
+            {nameError && (
+              <div className="flex items-center gap-1 mt-1">
+                <AlertCircle className="h-4 w-4 text-red-500" />
+                <p className="text-sm text-red-600">{nameError}</p>
+              </div>
+            )}
+            {!nameError && formData.name && (
+              <div className="flex items-center gap-1 mt-1">
+                <Check className="h-4 w-4 text-green-500" />
+                <p className="text-sm text-green-600">Name format is correct</p>
+              </div>
+            )}
+            <div className="mt-1">
+              <p className="text-xs text-[oklch(0.45_0_0)]">
+                <strong>Format:</strong> Last Name, First Name, Middle Initial (optional)
+              </p>
+              <p className="text-xs text-[oklch(0.45_0_0)] mt-1">
+                <strong>Examples:</strong> {nameExamples.join(", ")}
+              </p>
+            </div>
           </div>
 
           <div>
