@@ -586,7 +586,7 @@ export default function ShipmentsTab() {
                       {isDelayed && shipment.delayReason && (
                         <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
                           <p className="text-sm text-orange-800">
-                            <strong>Delay Reason:</strong> {shipment.delayReason}
+                            <strong>Reason:</strong> {shipment.delayReason}
                           </p>
                         </div>
                       )}
@@ -821,7 +821,7 @@ export default function ShipmentsTab() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Delay Reason</h2>
+              <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Reason</h2>
               <button
                 onClick={() => {
                   setShowDelayReasonModal(false);
@@ -838,7 +838,7 @@ export default function ShipmentsTab() {
                 Please provide the reason for the delay. This information will be included in delayed shipment reports.
               </p>
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Delay Reason *</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Reason *</label>
                 <textarea
                   value={delayReason}
                   onChange={(e) => setDelayReason(e.target.value)}
