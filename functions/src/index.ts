@@ -58,7 +58,7 @@ const retryOperation = async <T>(
   throw lastError!;
 };
 
-// Optimized email verification check
+// Email verification check
 export const checkEmailVerifications = onSchedule(
   {
     schedule: 'every 5 minutes',
@@ -88,7 +88,7 @@ export const checkEmailVerifications = onSchedule(
         return;
       }
 
-      // Process users
+      
       for (const doc of usersSnapshot.docs) {
         const userData = doc.data();
         processedCount++;
@@ -114,7 +114,7 @@ export const checkEmailVerifications = onSchedule(
         }
       }
 
-      // Commit batch updates
+      
       if (updatedCount > 0) {
         await batch.commit();
         console.log(`Successfully updated ${updatedCount} users' verification status`);
@@ -122,7 +122,7 @@ export const checkEmailVerifications = onSchedule(
       
       console.log(`Email verification check completed: Processed ${processedCount} users, updated ${updatedCount} users`);
       
-      // Report errors
+      
       if (errors.length > 0) {
         await logBulkError('checkEmailVerifications', errors);
       }
@@ -134,7 +134,7 @@ export const checkEmailVerifications = onSchedule(
   }
 );
 
-// Enhanced user creation - using blocking function
+// User creation - using blocking function
 export const onUserCreated = beforeUserCreated(async (event) => {
   const user = event.data;
   
@@ -256,7 +256,7 @@ async function logUserEvent(
   }
 }
 
-// Health check endpoint
+
 export const healthCheck = onRequest(async (req, res) => {
   try {
     await admin.firestore().collection('health').doc('check').set({

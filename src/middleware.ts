@@ -380,6 +380,7 @@ export async function middleware(request: NextRequest) {
           "/dashboard/admin/settings",
           "/dashboard/admin/shipments",
           "/api/admin",
+          "/api/reports",
         ],
         user: [
           "/dashboard/staff",
@@ -389,6 +390,7 @@ export async function middleware(request: NextRequest) {
           "/dashboard/staff/inventory", 
           "/dashboard/staff/settings",
           "/api/staff",
+          "/api/reports",
         ],
       };
 

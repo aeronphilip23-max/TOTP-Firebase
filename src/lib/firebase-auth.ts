@@ -1,6 +1,6 @@
 // lib/firebase-auth.ts - USING YOUR CONFIG
 import { cookies } from 'next/headers';
-import { baseUrl } from '../lib/config'; // Adjust import path as needed
+import { baseUrl } from '../lib/config'; 
 
 export async function getFirebaseUser() {
   try {
