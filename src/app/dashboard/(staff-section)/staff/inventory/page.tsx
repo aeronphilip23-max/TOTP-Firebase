@@ -6,39 +6,10 @@ import { useState, useEffect } from "react"
 import { db } from "@/src/lib/firebase"
 import { collection, getDocs, doc, setDoc } from "firebase/firestore";
 
-const UNIT_MEASUREMENTS = [
-  "units",
-  "kg",
-  "g",
-  "lbs",
-  "oz",
-  "liters",
-  "ml",
-  "gallons",
-  "cubic meters",
-  "cubic feet",
-  "meters",
-  "feet",
-  "inches",
-  "cm",
-  "mm",
-  "tons",
-  "boxes",
-  "pallets",
-  "rolls",
-  "sheets",
-  "pieces",
-]
+const UNIT_MEASUREMENTS = [ "units","kg","g","lbs","oz","liters","ml","gallons","cubic meters","cubic feet","meters","feet","inches","cm","mm","tons",
+  "boxes","pallets","rolls","sheets","pieces",]
 
-const CATEGORIES = [
-  "Structural",
-  "Building Materials",
-  "Electrical",
-  "Plumbing",
-  "Safety Equipment",
-  "Tools",
-  "Other",
-]
+const CATEGORIES = ["Structural","Building Materials","Electrical","Plumbing","Safety Equipment","Tools","Other",]
 
 const STOCK_LEVELS = {
   "Low Stock": (qty: number) => qty < 10,
