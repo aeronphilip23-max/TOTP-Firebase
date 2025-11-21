@@ -1,36 +1,83 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// Enhanced rate limiting with multiple layers
+const rateLimitMap = new Map<string, { count: number; lastReset: number; blockedUntil?: number }>();
+const suspiciousIPs = new Map<string, { score: number; lastOffense: number }>();
 
-// Rate limiting setup
-const rateLimitMap = new Map<string, { count: number; lastReset: number }>();
-const RATE_LIMIT_WINDOW = 60000;
-const MAX_REQUESTS_PER_WINDOW = 100;
+// Rate limit configurations
+const RATE_LIMITS = {
+  // General requests
+  NORMAL: { window: 60000, max: 100 }, // 100 requests per minute
+  // API endpoints
+  API: { window: 60000, max: 60 }, // 60 requests per minute
+  // Authentication endpoints
+  AUTH: { window: 60000, max: 10 }, // 10 requests per minute
+  // Admin endpoints
+  ADMIN: { window: 60000, max: 30 }, // 30 requests per minute
+};
 
-function checkRateLimit(ip: string): { allowed: boolean; remaining: number } {
+// Suspicious behavior scoring
+const SUSPICIOUS_BEHAVIORS = {
+  TOO_MANY_404: 10,
+  RATE_LIMIT_EXCEEDED: 5,
+  SUSPICIOUS_PATHS: 15,
+  BOT_LIKE_PATTERNS: 20,
+};
+
+function getRateLimitConfig(pathname: string): { window: number; max: number } {
+  if (pathname.startsWith('/api/auth')) return RATE_LIMITS.AUTH;
+  if (pathname.startsWith('/api/admin')) return RATE_LIMITS.ADMIN;
+  if (pathname.startsWith('/api/')) return RATE_LIMITS.API;
+  if (pathname.startsWith('/dashboard/admin')) return RATE_LIMITS.ADMIN;
+  return RATE_LIMITS.NORMAL;
+}
+
+function checkRateLimit(ip: string, pathname: string): { allowed: boolean; remaining: number; isSuspicious: boolean } {
+  const config = getRateLimitConfig(pathname);
   const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
+  const windowStart = now - config.window;
 
+  // Clean up old entries
   for (const [key, value] of rateLimitMap.entries()) {
     if (value.lastReset < windowStart) {
       rateLimitMap.delete(key);
     }
   }
 
+  // Check if IP is temporarily blocked
   const clientData = rateLimitMap.get(ip) || { count: 0, lastReset: now };
+  if (clientData.blockedUntil && now < clientData.blockedUntil) {
+    return { allowed: false, remaining: 0, isSuspicious: true };
+  }
+
+  // Reset counter if window expired
   if (clientData.lastReset < windowStart) {
     clientData.count = 0;
     clientData.lastReset = now;
+    clientData.blockedUntil = undefined;
   }
 
   clientData.count++;
   rateLimitMap.set(ip, clientData);
-  const remaining = Math.max(0, MAX_REQUESTS_PER_WINDOW - clientData.count);
+  
+  const remaining = Math.max(0, config.max - clientData.count);
+  const allowed = clientData.count <= config.max;
 
-  return {
-    allowed: clientData.count <= MAX_REQUESTS_PER_WINDOW,
-    remaining,
-  };
+  // If rate limit exceeded, temporarily block the IP
+  let isSuspicious = false;
+  if (!allowed) {
+    clientData.blockedUntil = now + (5 * 60 * 1000); // Block for 5 minutes
+    isSuspicious = true;
+    
+    // Track suspicious behavior
+    const suspiciousData = suspiciousIPs.get(ip) || { score: 0, lastOffense: now };
+    suspiciousData.score += SUSPICIOUS_BEHAVIORS.RATE_LIMIT_EXCEEDED;
+    suspiciousData.lastOffense = now;
+    suspiciousIPs.set(ip, suspiciousData);
+  }
+
+  return { allowed, remaining, isSuspicious };
 }
 
 function getClientIP(request: NextRequest): string {
@@ -48,22 +95,81 @@ function getClientIP(request: NextRequest): string {
   return 'unknown';
 }
 
-// PATH TRAVERSAL PROTECTION
-function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPath: string } {
-  let cleanPath = pathname
-    .replace(/\.\.\//g, '')
-    .replace(/\.\.\\/g, '')
-    .replace(/\/+/g, '/')
-    .replace(/[<>]/g, '')
-    .replace(/\/$/, '');
+// Enhanced path traversal protection
+function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPath: string; isSuspicious: boolean } {
+  const suspiciousPatterns = [
+    /\.\.\//g,
+    /\.\.\\/g,
+    /\/+/g,
+    /[<>]/g,
+    /\.\.$/,
+    /\/\.\./,
+    /\/\.\//,
+    /\/etc\/passwd/,
+    /\/proc\/self/,
+    /\.env/,
+    /\.git/,
+    /\.htaccess/,
+    /\.sql/,
+    /\/backup\//,
+    /\/admin\//i,
+    /\/php/,
+    /\/cgi-bin/,
+  ];
 
-  const hasTraversal = /\.\.|%2e%2e|%2E%2E|\\|\.\.$/i.test(cleanPath);
-  
-  if (hasTraversal || !cleanPath.startsWith('/')) {
-    return { isValid: false, cleanPath: '/' };
+  let cleanPath = pathname;
+  let isSuspicious = false;
+
+  // Check for suspicious patterns
+  for (const pattern of suspiciousPatterns) {
+    if (pattern.test(cleanPath)) {
+      isSuspicious = true;
+      cleanPath = cleanPath.replace(pattern, '');
+    }
   }
 
-  return { isValid: true, cleanPath };
+  // Normalize path
+  cleanPath = cleanPath
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '')
+    .replace(/^\/+/, '/');
+
+  const hasTraversal = /\.\.|%2e%2e|%2E%2E|\\|\.\.$|\.\.\/|\.\.\\/i.test(cleanPath);
+  
+  if (hasTraversal || !cleanPath.startsWith('/')) {
+    return { isValid: false, cleanPath: '/', isSuspicious: true };
+  }
+
+  return { isValid: true, cleanPath, isSuspicious };
+}
+
+// Bot detection
+function detectBotLikeBehavior(request: NextRequest, pathname: string): number {
+  let score = 0;
+  
+  const userAgent = request.headers.get('user-agent') || '';
+  const referer = request.headers.get('referer');
+  const accept = request.headers.get('accept');
+
+  // Common bot user agents
+  const botPatterns = [
+    /bot/i, /crawler/i, /spider/i, /scraper/i, 
+    /curl/i, /wget/i, /python/i, /java/i, /go-http/i
+  ];
+
+  // Suspicious headers
+  if (!userAgent) score += 10;
+  if (botPatterns.some(pattern => pattern.test(userAgent))) score += 15;
+  if (!referer && pathname.startsWith('/api/')) score += 5;
+  if (!accept) score += 5;
+
+  // Rapid fire requests to different endpoints
+  const rapidFirePattern = /(?:\/api\/[^\/]+\/[^\/]+)/;
+  if (rapidFirePattern.test(pathname)) {
+    score += 10;
+  }
+
+  return score;
 }
 
 // Enhanced auth check
@@ -103,13 +209,9 @@ async function checkAuth(request: NextRequest) {
   }
 }
 
-// Firebase token verification function
+// Firebase token verification (placeholder - same as yours)
 async function verifyIdToken(token: string): Promise<any> {
-  // You'll need to implement Firebase Admin token verification here
-  // This is a placeholder - you need to set up Firebase Admin SDK
   try {
-    // For now, we'll just return a mock verification
-    // In production, you should use Firebase Admin SDK
     return { uid: 'mock-user-id' };
   } catch (error) {
     throw new Error('Token verification failed');
@@ -118,12 +220,44 @@ async function verifyIdToken(token: string): Promise<any> {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const ip = getClientIP(request);
+
+  // Skip for static files and known good paths
+  if (pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|css|js|svg)$/)) {
+    return NextResponse.next();
+  }
+
+  // Enhanced path validation
+  const pathValidation = sanitizeAndValidatePath(pathname);
+  if (!pathValidation.isValid) {
+    console.log(`🚨 Blocked malicious path: ${pathname} -> ${pathValidation.cleanPath}`);
+    
+    // Track suspicious IP
+    const suspiciousData = suspiciousIPs.get(ip) || { score: 0, lastOffense: Date.now() };
+    suspiciousData.score += SUSPICIOUS_BEHAVIORS.SUSPICIOUS_PATHS;
+    suspiciousIPs.set(ip, suspiciousData);
+    
+    return NextResponse.redirect(new URL('/landingpage', request.url));
+  }
+
+  const cleanPathname = pathValidation.cleanPath;
+
+  // Bot detection
+  const botScore = detectBotLikeBehavior(request, cleanPathname);
+  if (botScore > 20) {
+    console.log(`🤖 Detected bot-like behavior from IP: ${ip}, score: ${botScore}`);
+    
+    const suspiciousData = suspiciousIPs.get(ip) || { score: 0, lastOffense: Date.now() };
+    suspiciousData.score += SUSPICIOUS_BEHAVIORS.BOT_LIKE_PATTERNS;
+    suspiciousIPs.set(ip, suspiciousData);
+  }
 
   // Apply rate limiting
-  const ip = getClientIP(request);
-  const rateLimit = checkRateLimit(ip);
+  const rateLimit = checkRateLimit(ip, cleanPathname);
   
   if (!rateLimit.allowed) {
+    console.log(`🚫 Rate limit exceeded for IP: ${ip} on path: ${cleanPathname}`);
+    
     return new NextResponse(
       JSON.stringify({ 
         error: 'Too many requests', 
@@ -133,23 +267,42 @@ export async function middleware(request: NextRequest) {
         status: 429,
         headers: {
           'Content-Type': 'application/json',
-          'X-RateLimit-Limit': MAX_REQUESTS_PER_WINDOW.toString(),
+          'X-RateLimit-Limit': getRateLimitConfig(cleanPathname).max.toString(),
           'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+          'X-RateLimit-Reset': '60',
+          'Retry-After': '60',
         },
       }
     );
   }
 
-  // PATH TRAVERSAL PROTECTION
-  const pathValidation = sanitizeAndValidatePath(pathname);
-  if (!pathValidation.isValid) {
-    console.log(`Blocked malicious path: ${pathname} -> ${pathValidation.cleanPath}`);
-    return NextResponse.redirect(new URL('/landingpage', request.url));
+  // Check if IP is suspicious and apply stricter limits
+  const suspiciousData = suspiciousIPs.get(ip);
+  if (suspiciousData && suspiciousData.score > 50) {
+    console.log(`⚠️ Suspicious IP detected: ${ip}, score: ${suspiciousData.score}`);
+    
+    // Apply stricter rate limiting for suspicious IPs
+    const strictRateLimit = { window: 60000, max: 10 };
+    const strictCheck = checkRateLimit(ip + '-strict', cleanPathname);
+    
+    if (!strictCheck.allowed) {
+      return new NextResponse(
+        JSON.stringify({ 
+          error: 'Access temporarily restricted', 
+          message: 'Suspicious activity detected. Please try again later.' 
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '300',
+          },
+        }
+      );
+    }
   }
 
-  const cleanPathname = pathValidation.cleanPath;
-
-  // CRITICAL: Define ALL public paths (no authentication required)
+  // Public paths
   const publicPaths = [
     "/",
     "/landingpage",
@@ -159,20 +312,17 @@ export async function middleware(request: NextRequest) {
     "/api/disable-mfa",
     "/_next",
     "/favicon.ico",
-    // Add other public paths here
   ];
 
-  // Check if it's a public path
   const isPublicPath = publicPaths.some((path) => 
     cleanPathname === path || cleanPathname.startsWith(path + '/')
   );
 
-  // If it's a public path, allow access without auth check
   if (isPublicPath) {
-    console.log(`✅ Allowing access to public route: ${cleanPathname}`);
     const response = NextResponse.next();
-    response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+    response.headers.set('X-RateLimit-Limit', getRateLimitConfig(cleanPathname).max.toString());
     response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+    response.headers.set('X-RateLimit-Reset', '60');
     return response;
   }
 
@@ -180,7 +330,7 @@ export async function middleware(request: NextRequest) {
   if (cleanPathname.startsWith('/dashboard')) {
     const token = request.cookies.get('idToken')?.value;
     
-    // Check for MFA operation in cookies (this is key!)
+    // Check for MFA operation in cookies
     const mfaOperationCookie = request.cookies.get('mfaOperation')?.value;
     const isMfaOperationActive = mfaOperationCookie === 'true';
     
@@ -192,8 +342,9 @@ export async function middleware(request: NextRequest) {
     if (isMfaOperationActive && (isFromSettings || cleanPathname.includes('/settings'))) {
       console.log('🔓 MFA operation in progress - allowing settings page access');
       const response = NextResponse.next();
-      response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+      response.headers.set('X-RateLimit-Limit', getRateLimitConfig(cleanPathname).max.toString());
       response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+      response.headers.set('X-RateLimit-Reset', '60');
       return response;
     }
     
@@ -277,8 +428,9 @@ export async function middleware(request: NextRequest) {
       if (isMfaOperationActive && (error.message?.includes('expired') || error.code === 'auth/user-token-expired')) {
         console.log('🔓 Allowing expired token during MFA operation');
         const response = NextResponse.next();
-        response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+        response.headers.set('X-RateLimit-Limit', getRateLimitConfig(cleanPathname).max.toString());
         response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+        response.headers.set('X-RateLimit-Reset', '60');
         return response;
       }
       
@@ -288,9 +440,19 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Add security headers to all responses
   const response = NextResponse.next();
-  response.headers.set('X-RateLimit-Limit', MAX_REQUESTS_PER_WINDOW.toString());
+  
+  // Security headers
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  
+  // Rate limit headers
+  response.headers.set('X-RateLimit-Limit', getRateLimitConfig(cleanPathname).max.toString());
   response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
+  response.headers.set('X-RateLimit-Reset', '60');
   
   return response;
 }
