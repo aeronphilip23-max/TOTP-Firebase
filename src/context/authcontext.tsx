@@ -1,4 +1,4 @@
-// context/authcontext.tsx (Optimized version)
+
 'use client';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
@@ -184,7 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Set the role in state
           setUserRole(firestoreRole);
           
-          // CRITICAL FIX: Don't redirect from TOTP setup pages OR during MFA operations
+          //  Don't redirect from TOTP setup pages OR during MFA operations
           const currentPath = window.location.pathname;
           const isAuthPage = currentPath.includes('/auth/');
           const isTotpPage = currentPath.includes('/verifyotp');
@@ -250,7 +250,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     logout,
     refreshUserRole,
-    refreshIdToken, // Add this to the context value
+    refreshIdToken, 
   };
 
   return (

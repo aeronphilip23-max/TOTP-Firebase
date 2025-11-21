@@ -47,7 +47,7 @@ export default function AuthGuard({ children, requiredRole }: AuthGuardProps) {
     }
   }, [pathname, router]);
 
-  // FIXED: Handle redirect when no user (moved to useEffect)
+  // Handle redirect when no user (moved to useEffect)
   useEffect(() => {
     if (!isPublicRoute && !loading && !user && !isRedirecting && !isMfaOperation) {
       console.log("AuthGuard - No user, redirecting to login");

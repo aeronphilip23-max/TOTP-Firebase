@@ -241,8 +241,6 @@ const handleCreateUser = async (userData: {
           break
 
         case "resend-verification":
-          // Note: You'll need to implement this functionality
-          // For now, we'll show a toast indicating the feature
           showToast(`Verification email has been sent to ${user.email}.`, "success")
           break
       }

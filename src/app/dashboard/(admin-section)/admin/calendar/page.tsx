@@ -252,7 +252,7 @@ export default function CalendarTab() {
     setNewShipment({
       ...newShipment,
       selectedMaterialId: materialId,
-      quantity: "" // Reset quantity when material changes
+      quantity: "" 
     })
   }
 
@@ -301,7 +301,7 @@ export default function CalendarTab() {
   try {
     setIsCreating(true)
     
-    // FIX: Get ALL shipments to find the highest ID number
+    // Get ALL shipments to find the highest ID number
     const shipmentsQuery = collection(db, "shipments");
     const querySnapshot = await getDocs(shipmentsQuery);
     
@@ -404,7 +404,7 @@ export default function CalendarTab() {
 
     // Create the shipment document - USE THE SHIPMENT ID AS THE DOCUMENT ID
     await setDoc(doc(db, "shipments", shipmentId), {
-      id: shipmentId, // Store the ID in the document as well
+      id: shipmentId, 
       destination: newShipment.destination,
       status: "ASSIGNING_DRIVER",
       eta: newShipment.eta,

@@ -18,6 +18,28 @@ function getUniqueTitleWithNumber(title: string, existingReports: any[]): string
   return title;
 }
 
+// PDF Generation Handler - ADD THIS FUNCTION
+const handlePDFGeneration = (htmlContent: string, filename: string) => {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Please allow popups to generate PDF');
+    return;
+  }
+
+  printWindow.document.write(htmlContent);
+  printWindow.document.close();
+  
+  // Auto-print and close
+  printWindow.onload = function() {
+    setTimeout(() => {
+      printWindow.print();
+      setTimeout(() => {
+        printWindow.close();
+      }, 500);
+    }, 500);
+  };
+};
+
 export default function ReportsPage() {
   const [showGenerateModal, setShowGenerateModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState("")
@@ -110,11 +132,7 @@ export default function ReportsPage() {
         throw new Error(error.error || "Failed to generate report")
       }
 
-      // Get the blob content directly
-      const blob = await response.blob();
-
-      // Store the report in Firestore (you'll need to implement this)
-      // For now, just create a report object for recent reports
+      // Add to recent reports with unique title
       const uniqueTitle = getUniqueTitleWithNumber(reportTitle, recentReports);
       const newReport = {
         id: `temp-${Date.now()}`,
@@ -123,24 +141,41 @@ export default function ReportsPage() {
         size: "~1.2 MB",
         type: selectedReportType,
         format: selectedFormat,
-        // Store the blob content if needed, or just regenerate on download
-      }
-      
+      };
       setRecentReports(prevReports => {
         const updated = [newReport, ...prevReports];
         return updated.slice(0, 5);
-      })
+      });
 
-      // Download the file
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      const extension = selectedFormat.toLowerCase()
-      a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.${extension}`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      // Handle different formats - FIXED PDF HANDLING
+      if (selectedFormat === "CSV") {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.csv`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else if (selectedFormat === "PDF") {
+        // For PDF, the API now returns JSON with HTML content
+        const result = await response.json();
+        if (result.html) {
+          handlePDFGeneration(result.html, result.filename);
+        } else {
+          // Fallback to blob download if HTML is not available
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${selectedReportType.replace(/ /g, "_")}_${new Date().toISOString().split("T")[0]}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }
+      }
 
       setShowGenerateModal(false)
     } catch (error: any) {
@@ -154,13 +189,13 @@ export default function ReportsPage() {
   const handleDownloadReport = async (report: any) => {
     setDownloadingReportId(report.id);
     try {
-      // Always regenerate the report when downloading from recent reports
+      // Regenerate the report when downloading
       const response = await fetch("/api/reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reportType: report.type,
-          dateRange: "Last 30 days", // Use the original date range if stored
+          dateRange: "Last 30 days",
           format: report.format || "CSV",
           reportTitle: report.name,
         }),
@@ -170,26 +205,44 @@ export default function ReportsPage() {
         throw new Error("Failed to download report");
       }
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const extension = (report.format || "CSV").toLowerCase();
-      a.download = `${report.name.replace(/ /g, "_")}.${extension}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      // Handle different formats for download - FIXED PDF HANDLING
+      if (report.format === "PDF") {
+        // For PDF, use HTML generation
+        const result = await response.json();
+        if (result.html) {
+          handlePDFGeneration(result.html, result.filename);
+        } else {
+          // Fallback to blob download
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${report.name.replace(/ /g, "_")}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }
+      } else {
+        // For CSV, use blob download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const extension = (report.format || "CSV").toLowerCase();
+        a.download = `${report.name.replace(/ /g, "_")}.${extension}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
       
       // Show success modal
       setSelectedDownloadReport({ ...report, success: true });
       setShowDownloadModal(true);
     } catch (error) {
       console.error("Error downloading report:", error);
-      setSelectedDownloadReport({ 
-        ...report, 
-        error: "Error downloading report. Please try regenerating the report." 
-      });
+      setSelectedDownloadReport({ ...report, error: "Error downloading report" });
       setShowDownloadModal(true);
     } finally {
       setDownloadingReportId(null);
@@ -197,12 +250,12 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="space-y-6"> {/* Changed from max-w-6xl to full width */}
+    <div className="space-y-6">
       <h1 className="text-3xl font-bold text-[oklch(0.18_0.08_250)]">Reports</h1>
 
       {/* Generate reports */}
       <div>
-        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Generate Report</h2> {/* Changed to text-2xl to match admin */}
+        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Generate Report</h2>
         <div className="grid md:grid-cols-3 gap-6">
           {reportTypes.map((report) => {
             const Icon = report.icon
@@ -230,7 +283,7 @@ export default function ReportsPage() {
 
       {/* Recent reports */}
       <div>
-        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Recent Reports</h2> {/* Changed to text-2xl to match admin */}
+        <h2 className="text-2xl font-semibold text-[oklch(0.18_0.08_250)] mb-4">Recent Reports</h2>
         <div className="bg-white rounded-lg border border-[oklch(0.88_0_0)]">
           {recentReports.map((report, index) => (
             <div

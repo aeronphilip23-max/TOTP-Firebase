@@ -1,4 +1,4 @@
-// lib/firebase-auth.ts - USING YOUR CONFIG
+
 import { cookies } from 'next/headers';
 import { baseUrl } from '../lib/config'; 
 

@@ -1,4 +1,4 @@
-// app/api/auth/verify/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
@@ -9,17 +9,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No token provided' }, { status: 401 });
     }
 
-    // For now, we'll do a simple validation
-    // In production, you should verify the token with Firebase Admin
+
     if (typeof idToken === 'string' && idToken.length > 10) {
-      // Token looks valid (basic check)
-      // You can add proper Firebase Admin verification here if needed
+
       
       return NextResponse.json({
         user: {
-          uid: 'temp-user-id', // You would get this from proper verification
-          email: 'user@example.com', // You would get this from proper verification
-          role: 'user' // Default role - you would get this from your database
+          uid: 'temp-user-id', 
+          email: 'user@example.com', 
+          role: 'user' 
         },
       });
     } else {

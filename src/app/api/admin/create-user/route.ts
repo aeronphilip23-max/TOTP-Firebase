@@ -1,8 +1,8 @@
-// src/app/api/admin/create-user/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import admin from '@/src/lib/firebase-admin';
 import { getAuth } from 'firebase-admin/auth';
-import { auth } from '@/src/lib/firebase'; // Import client auth
+import { auth } from '@/src/lib/firebase'; 
 import { createUserWithEmailAndPassword, sendEmailVerification, updateProfile } from 'firebase/auth';
 
 export async function POST(request: NextRequest) {
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     console.log('Create User API called');
     console.log('Request data:', { name, email, role, requireEmailVerification });
 
-    // Validate input
+    
     if (!name || !email || !password) {
       return NextResponse.json(
         { error: 'Missing required fields' },
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     let userRecord;
     let firebaseUser;
 
-    // METHOD 1: Use Client SDK (same as your register page) - This actually sends emails
+    // Use Client SDK (same as your register page) 
     try {
       console.log('Creating user with Client SDK...');
       
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
       console.log('User created with Client SDK:', firebaseUser.uid);
       
-      // Send email verification using Client SDK (this actually sends the email)
+      // Send email verification using Client SDK
       if (requireEmailVerification) {
         console.log('Sending verification email with Client SDK...');
         await sendEmailVerification(firebaseUser);

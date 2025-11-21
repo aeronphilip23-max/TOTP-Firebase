@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
         },
       })
       
-      // CRITICAL: Create a new custom token immediately after disabling MFA
+      // Create a new custom token immediately after disabling MFA
       // This prevents token expiration issues
       const newCustomToken = await getAuth().createCustomToken(uid)
       

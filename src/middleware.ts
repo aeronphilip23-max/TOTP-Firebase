@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Enhanced rate limiting with multiple layers
+// Rate limiting with multiple layers
 const rateLimitMap = new Map<string, { count: number; lastReset: number; blockedUntil?: number }>();
 const suspiciousIPs = new Map<string, { score: number; lastOffense: number }>();
 
@@ -95,9 +95,9 @@ function getClientIP(request: NextRequest): string {
   return 'unknown';
 }
 
-// 🚨 FIXED: Enhanced path traversal protection
+// Enhanced path traversal protection
 function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPath: string; isSuspicious: boolean } {
-  // 🚨 CRITICAL FIX: Allow normal paths first
+  // Allow normal paths first
   const normalPaths = ['/', '/landingpage', '/auth/login', '/auth/register', '/verifyotp'];
   if (normalPaths.includes(pathname)) {
     return { isValid: true, cleanPath: pathname, isSuspicious: false };
@@ -131,13 +131,13 @@ function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPat
     }
   }
 
-  // 🚨 FIXED: Normalize path but don't be too aggressive
+  //  Normalize path but don't be too aggressive
   cleanPath = cleanPath
     .replace(/\/+/g, '/')  // Replace multiple slashes with single slash
     .replace(/\/$/, '')    // Remove trailing slash
     || '/';                // Ensure it doesn't become empty
 
-  // 🚨 FIXED: More specific traversal detection
+  //  More specific traversal detection
   const hasTraversal = /(?:^|\/)\.\.(?:\/|$)|\\|\/\/(?![\/])/i.test(cleanPath);
   
   if (hasTraversal || !cleanPath.startsWith('/')) {
@@ -222,16 +222,44 @@ async function verifyIdToken(token: string): Promise<any> {
   }
 }
 
+// Function to get user's default dashboard based on role
+function getUserDefaultDashboard(userRole: string): string {
+  switch (userRole) {
+    case 'admin':
+      return '/dashboard/admin/dashboard';
+    case 'user':
+      return '/dashboard/staff';
+    default:
+      return '/dashboard/staff';
+  }
+}
+
+// Function to check if user is accessing unauthorized role path
+function isUnauthorizedRoleAccess(userRole: string, pathname: string): boolean {
+  const adminPaths = ['/dashboard/admin', '/api/admin'];
+  const userPaths = ['/dashboard/staff', '/api/staff'];
+  
+  if (userRole === 'admin') {
+    // Admin trying to access user paths - this is unauthorized
+    return userPaths.some(path => pathname.startsWith(path));
+  } else if (userRole === 'user') {
+    // User trying to access admin paths - this is unauthorized
+    return adminPaths.some(path => pathname.startsWith(path));
+  }
+  
+  return false;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const ip = getClientIP(request);
 
-  // 🚨 CRITICAL FIX: Skip for static files and known good paths
+  // Skip for static files and known good paths
   if (pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|css|js|svg)$/)) {
     return NextResponse.next();
   }
 
-  // 🚨 CRITICAL FIX: Skip middleware entirely for public paths to prevent loops
+  // Skip middleware entirely for public paths to prevent loops
   const publicPaths = [
     "/",
     "/landingpage", 
@@ -327,7 +355,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 🚨 CRITICAL FIX: Check if user is trying to access protected routes (BOTH dashboard AND API)
+  // Check if user is trying to access protected routes (BOTH dashboard AND API)
   if (cleanPathname.startsWith('/dashboard') || cleanPathname.startsWith('/api/')) {
     const token = request.cookies.get('idToken')?.value;
     
@@ -351,8 +379,9 @@ export async function middleware(request: NextRequest) {
     
     if (!token) {
       console.log(`🔐 No token found for protected route: ${cleanPathname}, redirecting to login`);
-      // 🚨 Use temporary redirect (302) to prevent caching issues
-      return NextResponse.redirect(new URL('/auth/login', request.url), 302);
+      const redirectUrl = new URL('/auth/login', request.url);
+      redirectUrl.searchParams.set('returnTo', cleanPathname);
+      return NextResponse.redirect(redirectUrl, 302);
     }
 
     try {
@@ -363,11 +392,25 @@ export async function middleware(request: NextRequest) {
       const auth = await checkAuth(request);
       if (!auth) {
         console.log(`🔐 Auth check failed for: ${cleanPathname}, redirecting to login`);
-        return NextResponse.redirect(new URL('/auth/login', request.url), 302);
+        const redirectUrl = new URL('/auth/login', request.url);
+        redirectUrl.searchParams.set('returnTo', cleanPathname);
+        return NextResponse.redirect(redirectUrl, 302);
       }
 
       // Role-based access control
       const userRole = auth.role;
+
+      // First check if user is trying to access unauthorized role paths
+      if (isUnauthorizedRoleAccess(userRole, cleanPathname)) {
+        console.log(`🚫 Role violation: User with role ${userRole} trying to access ${cleanPathname}`);
+        
+        // Get user's default dashboard based on their role
+        const defaultDashboard = getUserDefaultDashboard(userRole);
+        console.log(`🔄 Redirecting user to their authorized dashboard: ${defaultDashboard}`);
+        
+        // Redirect to their authorized dashboard WITHOUT preserving the unauthorized path
+        return NextResponse.redirect(new URL(defaultDashboard, request.url), 302);
+      }
 
       const roleAccessPatterns = {
         admin: [
@@ -415,12 +458,10 @@ export async function middleware(request: NextRequest) {
       if (!hasAccess && !hasCommonAccess) {
         console.log(`🚫 Access denied for role ${userRole} to ${cleanPathname}`);
         
-        // Redirect to appropriate dashboard based on role
-        let defaultPage = '/dashboard/staff';
-        if (userRole === 'admin') defaultPage = '/dashboard/admin/dashboard';
-        if (userRole === 'user') defaultPage = '/dashboard/staff';
-        console.log(`🔄 Redirecting to: ${defaultPage}`);
-        return NextResponse.redirect(new URL(defaultPage, request.url), 302);
+        //  Redirect to appropriate dashboard based on role
+        const defaultDashboard = getUserDefaultDashboard(userRole);
+        console.log(`🔄 Redirecting to: ${defaultDashboard}`);
+        return NextResponse.redirect(new URL(defaultDashboard, request.url), 302);
       }
 
       console.log(`✅ Access granted for role ${userRole} to ${cleanPathname}`);
@@ -440,8 +481,9 @@ export async function middleware(request: NextRequest) {
       
       // Otherwise redirect to login
       console.log(`🔐 Token verification failed for: ${cleanPathname}, redirecting to login`);
-      // 🚨 Clear invalid tokens and redirect
-      const response = NextResponse.redirect(new URL('/auth/login', request.url), 302);
+      const redirectUrl = new URL('/auth/login', request.url);
+      redirectUrl.searchParams.set('returnTo', cleanPathname);
+      const response = NextResponse.redirect(redirectUrl, 302);
       response.cookies.delete('idToken');
       response.cookies.delete('userRole');
       return response;

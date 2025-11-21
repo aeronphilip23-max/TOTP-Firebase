@@ -73,7 +73,7 @@ async function getShipmentAnalysis(dateRange: string) {
         status: s.status || "UNKNOWN",
         delayReason: s.delayReason || null,
         lalamoveOrderId: s.lalamoveOrderId || null,
-        quantity: s.quantity !== undefined ? s.quantity : 0, // Ensure quantity is never undefined
+        quantity: s.quantity !== undefined ? s.quantity : 0, 
         createdAt: s.createdAt || new Date().toISOString(),
       })),
       generatedAt: new Date().toISOString(),

@@ -59,7 +59,7 @@ async function reverseGeocode(lat: number, lng: number, retries = 3) {
       const url = `https://geocode.maps.co/reverse?` +
         `lat=${encodeURIComponent(lat)}` +
         `&lon=${encodeURIComponent(lng)}` +
-        `&api_key=6911f9876f7cd008218026vcrb318d9`;  // Add your API key
+        `&api_key=6911f9876f7cd008218026vcrb318d9`;  
 
       console.log(`[API] Reverse geocoding coordinates:`, { lat, lng, url });
 
@@ -83,7 +83,7 @@ async function reverseGeocode(lat: number, lng: number, retries = 3) {
       const data = await response.json();
       console.log(`[API] Reverse geocode result:`, data);
 
-      // For Lalamove PH market, we'll consider both 'ph' and 'phl' as valid country codes
+      
       const countryCode = data?.address?.country_code?.toLowerCase();
       if (!countryCode) {
         throw new Error('No country code in response');

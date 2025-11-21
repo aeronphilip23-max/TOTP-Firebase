@@ -1,4 +1,4 @@
-// lib/config.ts - IMPROVED VERSION
+
 export const getBaseUrl = () => {
   // Always respect NEXTAUTH_URL if explicitly set
   if (process.env.NEXTAUTH_URL) {
@@ -7,7 +7,6 @@ export const getBaseUrl = () => {
   
   // In production on Vercel
   if (process.env.VERCEL_ENV === 'production') {
-    // Use VERCEL_PROJECT_PRODUCTION_URL if available, otherwise VERCEL_URL
     const productionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
     if (productionUrl) {
       return `https://${productionUrl}`;
@@ -23,5 +22,5 @@ export const getBaseUrl = () => {
   return 'http://localhost:3000';
 };
 
-// Use in your middleware or other server components
+
 export const baseUrl = getBaseUrl();
