@@ -94,7 +94,7 @@ const EnhancedCalendar = ({
         </h4>
         <div className="flex items-center gap-2 text-sm text-[oklch(0.45_0_0)]">
           <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-[oklch(0.68_0.19_35)] rounded-full"></div>
+            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
             <span>Shipments</span>
           </div>
         </div>
@@ -111,7 +111,7 @@ const EnhancedCalendar = ({
           hasShipments: shipmentDates
         }}
         modifiersClassNames={{
-          hasShipments: "relative after:content-[''] after:absolute after:bottom-1 after:left-1/2 after:-translate-x-1/2 after:w-2 after:h-2 after:bg-[oklch(0.68_0.19_35)] after:rounded-full"
+          hasShipments: "relative after:content-[''] after:absolute after:bottom-1 after:left-1/2 after:-translate-x-1/2 after:w-2 after:h-2 after:bg-blue-500 after:rounded-full"
         }}
       />
 
@@ -123,11 +123,7 @@ const EnhancedCalendar = ({
             <span>Today</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-[oklch(0.68_0.19_35)] rounded"></div>
-            <span>Selected</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-[oklch(0.68_0.19_35)] rounded-full"></div>
+            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             <span>Has Shipments</span>
           </div>
         </div>
@@ -448,41 +444,67 @@ export default function CalendarTab() {
   }
 }
 
-  // Filter shipments for selected date
-  const shipmentsForSelectedDate = shipments.filter(shipment => {
-    if (!shipment.eta) return false;
-    const shipmentDate = new Date(shipment.eta).toISOString().split("T")[0];
-    const selectedDateStr = selectedDate.toISOString().split("T")[0];
-    return shipmentDate === selectedDateStr;
-  })
+// Filter shipments for selected date 
+const shipmentsForSelectedDate = shipments.filter(shipment => {
+  if (!shipment.eta) return false;
+  
+  try {
+    // Parse the shipment ETA date
+    const shipmentDate = new Date(shipment.eta);
+    
+    // Create comparison dates at start of day (to ignore time)
+    const shipmentDateStart = new Date(shipmentDate);
+    shipmentDateStart.setHours(0, 0, 0, 0);
+    
+    const selectedDateStart = new Date(selectedDate);
+    selectedDateStart.setHours(0, 0, 0, 0);
+    
+    // Compare dates (ignoring time)
+    return shipmentDateStart.getTime() === selectedDateStart.getTime();
+  } catch (error) {
+    console.error('Error parsing shipment date:', shipment.eta, error);
+    return false;
+  }
+});
 
-// Get today's shipments - COMPLETE FIXED VERSION
-  const today = new Date();
-  const todayString = today.toISOString().split('T')[0]; // "2024-01-15"
+// Get today's shipments 
+const today = new Date();
+today.setHours(0, 0, 0, 0); // Set to start of day
 
-  const todayShipments = shipments.filter(shipment => {
+const todayShipments = shipments.filter(shipment => {
+  if (!shipment.eta) return false;
+  
+  try {
+    const shipmentDate = new Date(shipment.eta);
+    const shipmentDateStart = new Date(shipmentDate);
+    shipmentDateStart.setHours(0, 0, 0, 0);
+    
+    return shipmentDateStart.getTime() === today.getTime();
+  } catch (error) {
+    console.error('Error parsing shipment date:', shipment.eta, error);
+    return false;
+  }
+});
+
+  // Get upcoming shipments (next 7 days)
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const nextWeek = new Date();
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  nextWeek.setHours(23, 59, 59, 999); // End of the 7th day
+
+  const upcomingShipments = shipments.filter(shipment => {
     if (!shipment.eta) return false;
     
     try {
-      const shipmentDate = new Date(shipment.eta);
-      const shipmentDateString = shipmentDate.toISOString().split('T')[0];
-      return shipmentDateString === todayString;
+      const eventDate = new Date(shipment.eta);
+      return eventDate > todayStart && eventDate <= nextWeek;
     } catch (error) {
       console.error('Error parsing shipment date:', shipment.eta, error);
       return false;
     }
   });
-
-  // Get upcoming shipments (next 7 days)
-  const nextWeek = new Date()
-  nextWeek.setDate(nextWeek.getDate() + 7)
-  const upcomingShipments = shipments.filter(shipment => {
-    if (!shipment.eta) return false;
-    const eventDate = new Date(shipment.eta)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    return eventDate > today && eventDate <= nextWeek
-  })
 
   const selectedMaterial = getSelectedMaterial()
   const maxQuantity = selectedMaterial?.quantity || 0

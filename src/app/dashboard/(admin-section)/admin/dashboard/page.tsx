@@ -1,6 +1,6 @@
 "use client"
 
-import { Package, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react"
+import { Package, TrendingUp, AlertTriangle, CheckCircle, CalendarIcon, Clock } from "lucide-react"
 import { Bar, BarChart, Line, LineChart, XAxis, YAxis, ResponsiveContainer } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/src/components/ui/chart"
 import { Calendar } from "@/src/components/ui/calendar"
@@ -15,6 +15,109 @@ interface Activity {
   timestamp: Date;
 }
 
+interface Shipment {
+  id: string;
+  destination?: string;
+  materials?: string;
+  eta?: string;
+  status?: string;
+  lalamoveOrderId?: string | null;
+  quantity?: number;
+  materialId?: string;
+  delayReason?: string;
+  createdAt?: any;
+}
+
+// Enhanced Calendar Component using CSS Modifiers
+const EnhancedCalendar = ({ 
+  selectedDate, 
+  onSelect, 
+  shipments 
+}: { 
+  selectedDate: Date; 
+  onSelect: (date: Date | undefined) => void; 
+  shipments: Shipment[];
+}) => {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+
+  // Get unique dates that have shipments for CSS modifiers
+  const shipmentDates = shipments
+    .filter(shipment => shipment.eta) // Only include shipments with ETA
+    .map(shipment => new Date(shipment.eta as string));
+
+  return (
+    <div className="bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)] shadow-sm">
+      <div className="flex items-center gap-2 mb-4">
+        <CalendarIcon className="h-5 w-5 text-[oklch(0.68_0.19_35)]" />
+        <h3 className="font-semibold text-[oklch(0.18_0.08_250)]">Calendar</h3>
+      </div>
+      
+      {/* Calendar Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="font-medium text-[oklch(0.18_0.08_250)]">
+          {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        </h4>
+        <div className="flex items-center gap-2 text-sm text-[oklch(0.45_0_0)]">
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            <span>Shipments</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Calendar */}
+      <Calendar
+        mode="single"
+        selected={selectedDate}
+        onSelect={onSelect}
+        onMonthChange={setCurrentMonth}
+        className="w-full"
+        modifiers={{
+          hasShipments: shipmentDates
+        }}
+        modifiersClassNames={{
+          hasShipments: "relative after:content-[''] after:absolute after:bottom-1 after:left-1/2 after:-translate-x-1/2 after:w-2 after:h-2 after:bg-blue-500 after:rounded-full"
+        }}
+      />
+
+      {/* Calendar Legend */}
+      <div className="mt-4 pt-4 border-t border-[oklch(0.88_0_0)]">
+        <div className="flex items-center justify-between text-xs text-[oklch(0.45_0_0)]">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-blue-100 border border-blue-300 rounded"></div>
+            <span>Today</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-[oklch(0.68_0.19_35)] rounded"></div>
+            <span>Selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+            <span>Has Shipments</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Status badge styling function
+const getStatusBadgeStyle = (status: string) => {
+  switch (status) {
+    case "COMPLETED":
+      return "bg-green-100 text-green-700 border-green-300";
+    case "PICKED_UP":
+    case "DRIVER_ASSIGNED":
+      return "bg-blue-100 text-blue-700 border-blue-300";
+    case "CANCELED":
+      return "bg-red-100 text-red-700 border-red-300";
+    case "DELAYED":
+      return "bg-orange-100 text-orange-700 border-orange-300";
+    default:
+      return "bg-yellow-100 text-yellow-700 border-yellow-300";
+  }
+}
+
 export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [inventoryData, setInventoryData] = useState<Array<{ name?: string; quantity?: number }>>([])
@@ -26,6 +129,22 @@ export default function DashboardPage() {
   const [warehouseCapacity, setWarehouseCapacity] = useState(0)
   const [onTimeDeliveryPercent, setOnTimeDeliveryPercent] = useState(94)
   const [recentActivity, setRecentActivity] = useState<Activity[]>([])
+  const [allShipments, setAllShipments] = useState<Shipment[]>([])
+
+  // Load all shipments for calendar
+  const getAllShipments = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "shipments"));
+      const shipmentsData = querySnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      })) as Shipment[];
+
+      setAllShipments(shipmentsData);
+    } catch (error) {
+      console.error("Error loading shipments:", error);
+    }
+  }
 
   const getMaterials = async () => {
     try {
@@ -172,12 +291,36 @@ export default function DashboardPage() {
     return `${diffDays}d ago`
   }
 
+  // Filter shipments for selected date
+  const shipmentsForSelectedDate = allShipments.filter(shipment => {
+    if (!shipment.eta) return false;
+    
+    try {
+      // Parse the shipment ETA date
+      const shipmentDate = new Date(shipment.eta);
+      
+      // Create comparison dates at start of day (to ignore time)
+      const shipmentDateStart = new Date(shipmentDate);
+      shipmentDateStart.setHours(0, 0, 0, 0);
+      
+      const selectedDateStart = new Date(selectedDate);
+      selectedDateStart.setHours(0, 0, 0, 0);
+      
+      // Compare dates (ignoring time)
+      return shipmentDateStart.getTime() === selectedDateStart.getTime();
+    } catch (error) {
+      console.error('Error parsing shipment date:', shipment.eta, error);
+      return false;
+    }
+  });
+
   useEffect(() => {
     getMaterials()
     getShipmentsData()
     getActiveShipmentsCount()
     getCompletedTodayCount()
     getRecentActivity()
+    getAllShipments()
   }, [])
 
   useEffect(() => {
@@ -311,9 +454,64 @@ export default function DashboardPage() {
 
       {/* Calendar Sidebar */}
       <div className="space-y-6">
-        <div className="bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)]">
-          <h2 className="text-lg font-semibold text-[oklch(0.18_0.08_250)] mb-4">Calendar</h2>
-          <Calendar mode="single" selected={selectedDate} onSelect={(date) => date && setSelectedDate(date)} />
+        {/* Enhanced Calendar */}
+        <EnhancedCalendar
+          selectedDate={selectedDate}
+          onSelect={(date) => date && setSelectedDate(date)}
+          shipments={allShipments}
+        />
+
+        {/* Selected Date Shipments */}
+        <div className="bg-white p-6 rounded-lg border border-[oklch(0.88_0_0)] shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-[oklch(0.18_0.08_250)]">
+              Shipments for {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </h3>
+            <span className="px-2 py-1 bg-[oklch(0.96_0_0)] text-[oklch(0.45_0_0)] text-sm rounded-md">
+              {shipmentsForSelectedDate.length} shipments
+            </span>
+          </div>
+          
+          {shipmentsForSelectedDate.length > 0 ? (
+            <div className="space-y-3 max-h-80 overflow-y-auto">
+              {shipmentsForSelectedDate.map((shipment) => (
+                <div
+                  key={shipment.id}
+                  className="p-3 rounded-lg border border-[oklch(0.88_0_0)] hover:border-[oklch(0.68_0.19_35)] transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusBadgeStyle(shipment.status || 'ASSIGNING_DRIVER')}`}
+                    >
+                      {shipment.status?.toLowerCase().replace(/_/g, ' ') || 'assigning driver'}
+                    </span>
+                    {shipment.delayReason && (
+                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700 border border-orange-300">
+                        Delayed
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">{shipment.id}</p>
+                  <p className="text-xs text-[oklch(0.45_0_0)] mb-1">{shipment.destination}</p>
+                  <div className="flex items-center gap-2 text-xs text-[oklch(0.45_0_0)]">
+                    <Package className="h-3 w-3" />
+                    <span className="truncate">{shipment.materials}</span>
+                  </div>
+                  {shipment.delayReason && (
+                    <div className="flex items-center gap-1 mt-1 text-xs text-[oklch(0.45_0_0)]">
+                      <Clock className="h-3 w-3" />
+                      <span>Delay: {shipment.delayReason}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <CalendarIcon className="h-8 w-8 text-[oklch(0.88_0_0)] mx-auto mb-2" />
+              <p className="text-sm text-[oklch(0.45_0_0)]">No shipments scheduled for this date</p>
+            </div>
+          )}
         </div>
 
         {/* Quick Stats */}
