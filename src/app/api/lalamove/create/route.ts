@@ -1,7 +1,80 @@
 import { NextResponse } from "next/server";
-import { LalamoveService } from "@/src/lib/services/lalamove";
-import { MockLalamoveService } from "@/src/lib/services/mock-lalamove";
 import { geocodeAddress, isValidCoordinate } from "@/src/lib/services/geocoding";
+import * as admin from 'firebase-admin';
+
+// Initialize Firebase Admin if not already initialized
+function initializeFirebaseAdmin() {
+  if (admin.apps.length > 0) {
+    return admin.app();
+  }
+
+  try {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!projectId || !clientEmail || !privateKey) {
+      console.error('[API] Missing Firebase Admin credentials:', {
+        hasProjectId: !!projectId,
+        hasClientEmail: !!clientEmail,
+        hasPrivateKey: !!privateKey
+      });
+      throw new Error('Firebase Admin credentials not configured. Please check your .env.local file.');
+    }
+
+    return admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, '\n'),
+      }),
+    });
+  } catch (error: any) {
+    console.error('[API] Firebase admin initialization error:', error);
+    throw new Error(`Failed to initialize Firebase Admin: ${error.message}`);
+  }
+}
+
+type MockDeliveryStatus = "ASSIGNING_DRIVER" | "DRIVER_ASSIGNED" | "PICKED_UP" | "COMPLETED" | "CANCELED";
+
+interface MockStop {
+  address: string;
+  coordinates: { lat: number; lng: number };
+}
+
+interface MockDelivery {
+  id: string;
+  status: MockDeliveryStatus;
+  stops: MockStop[];
+  driver?: { name: string; phone: string } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeStop(s: any): MockStop {
+  try {
+    const address =
+      typeof s?.addresses?.en_PH === "string"
+        ? s.addresses.en_PH
+        : typeof s?.addresses?.en_PH?.displayString === "string"
+        ? s.addresses.en_PH.displayString
+        : typeof s?.address === "string"
+        ? s.address
+        : typeof s?.destination === "string"
+        ? s.destination
+        : "Unknown";
+
+    const coordinates = {
+      lat: typeof s?.location?.lat === "number" ? s.location.lat : Number(s?.location?.lat) || 0,
+      lng: typeof s?.location?.lng === "number" ? s.location.lng : Number(s?.location?.lng) || 0,
+    };
+
+    return { address, coordinates };
+  } catch (error) {
+    console.error('[API] Error normalizing stop:', error);
+    return { address: "Unknown", coordinates: { lat: 0, lng: 0 } };
+  }
+}
 
 async function geocodeStop(stop: any, index: number) {
   // First check if we already have valid coordinates
@@ -10,10 +83,11 @@ async function geocodeStop(stop: any, index: number) {
     stop.location?.lng &&
     isValidCoordinate(stop.location.lat, stop.location.lng)
   ) {
+    console.log(`[API] Stop ${index} already has valid coordinates`);
     return stop;
   }
 
-  // Extract address from stop - check both en_PH and en_HK locales
+  // Extract address from stop
   const address =
     typeof stop.address === "string"
       ? stop.address
@@ -25,137 +99,199 @@ async function geocodeStop(stop: any, index: number) {
         stop.destination || 
         null;
 
-    if (!address) {
-      console.error('[API] Stop data:', JSON.stringify(stop, null, 2));
-      throw new Error(`Stop ${index} has no valid coordinates or address to geocode`);
-    }
-
-    console.log(`[API] Geocoding address for stop ${index}: "${address}"`);
-    const coords = await geocodeAddress(address);
+  if (!address) {
+    console.warn('[API] Stop has no address, using fallback coordinates');
+    const fallbackCoords = { lat: 14.5995, lng: 120.9842 };
     
-    if (!coords || !isValidCoordinate(coords.lat, coords.lng)) {
-      throw new Error(
-        `Failed to geocode address for stop ${index}: "${address}". ` +
-        `Please provide a more specific address or valid coordinates.`
-      );
-    }
-
-    // Return stop with normalized structure
     return {
       ...stop,
-      location: coords,
+      location: fallbackCoords,
       addresses: {
         en_PH: {
-          displayString: address,
-          geocoding: coords
+          displayString: "Unknown Address",
+          geocoding: { ...fallbackCoords, fallback: true }
         }
       }
     };
   }
 
-async function reverseGeocode(lat: number, lng: number, retries = 3) {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const url = `https://geocode.maps.co/reverse?` +
-        `lat=${encodeURIComponent(lat)}` +
-        `&lon=${encodeURIComponent(lng)}` +
-        `&api_key=6911f9876f7cd008218026vcrb318d9`;  
-
-      console.log(`[API] Reverse geocoding coordinates:`, { lat, lng, url });
-
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'TOTP-Firebase/1.0 (nonut1619@gmail.com)'
+  console.log(`[API] Geocoding address for stop ${index}: "${address}"`);
+  const coords = await geocodeAddress(address);
+  
+  if (!coords || !isValidCoordinate(coords.lat, coords.lng)) {
+    console.warn(`[API] Geocoding failed for "${address}", using fallback coordinates`);
+    const fallbackCoords = { lat: 14.5995, lng: 120.9842 };
+    
+    return {
+      ...stop,
+      location: fallbackCoords,
+      addresses: {
+        en_PH: {
+          displayString: address,
+          geocoding: { ...fallbackCoords, fallback: true }
         }
-      });
-
-      if (response.status === 429) {
-        const waitTime = Math.pow(2, attempt) * 1000;
-        console.log(`[API] Rate limited, waiting ${waitTime}ms`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-        continue;
       }
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log(`[API] Reverse geocode result:`, data);
-
-      
-      const countryCode = data?.address?.country_code?.toLowerCase();
-      if (!countryCode) {
-        throw new Error('No country code in response');
-      }
-
-      // Normalize country codes
-      const normalizedCode = countryCode === 'phl' ? 'ph' : countryCode;
-      return normalizedCode;
-    } catch (error) {
-      console.error(`[API] Reverse geocode attempt ${attempt + 1} failed:`, error);
-      if (attempt === retries - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+    };
   }
-  return null;
+
+  return {
+    ...stop,
+    location: coords,
+    addresses: {
+      en_PH: {
+        displayString: address,
+        geocoding: coords
+      }
+    }
+  };
 }
 
 export async function POST(req: Request) {
+  console.log("[API] /api/lalamove/create called");
+  
   try {
-    const payload = await req.json();
-    console.log("[API] /api/lalamove/create payload:", JSON.stringify(payload));
-
-    if (!payload.stops || payload.stops.length < 2) {
-      return NextResponse.json({ error: "Invalid stops" }, { status: 400 });
+    // Initialize Firebase Admin first
+    let app;
+    try {
+      app = initializeFirebaseAdmin();
+      console.log('[API] Firebase Admin initialized successfully');
+    } catch (initError: any) {
+      console.error('[API] Firebase Admin initialization failed:', initError);
+      return NextResponse.json(
+        { 
+          error: "Server configuration error",
+          details: initError.message,
+          hint: "Please check Firebase Admin credentials in environment variables"
+        },
+        { status: 500 }
+      );
     }
 
-    // Geocode stops if needed
-    try {
-      const geocodedStops = await Promise.all(
-        payload.stops.map((stop: any, index: number) => geocodeStop(stop, index))
-      );
-      payload.stops = geocodedStops;
-    } catch (error: any) {
-      console.error("[API] Geocoding error:", error);
+    // Check if request is JSON
+    const contentType = req.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      console.error("[API] Invalid content type:", contentType);
       return NextResponse.json(
-        { error: "Geocoding failed", details: error.message },
+        { error: "Invalid content type. Expected application/json" },
         { status: 400 }
       );
     }
 
-    // const svc = new LalamoveService();
-    const svc = new MockLalamoveService();
-
+    let payload;
     try {
-      // Add shipment ID as partner order ID for tracking
-      payload.partnerOrderId = `SH-${String(Date.now())}`;
-      
-      const resp = await svc.createDelivery(payload);
-      console.log("[API] Lalamove create result:", resp);
-      return NextResponse.json(resp);
-    } catch (err: any) {
-      console.error("[API] Lalamove error:", err);
-      
-      // Check for specific quotation errors
-      if (err.status === 400 && err.body?.includes('quotation')) {
-        return NextResponse.json({ 
-          error: "Failed to get delivery quote", 
-          details: err.body 
-        }, { status: 400 });
-      }
-
-      // Other error handling...
+      payload = await req.json();
+      console.log("[API] Payload received:", JSON.stringify(payload, null, 2));
+    } catch (parseError) {
+      console.error("[API] JSON parse error:", parseError);
       return NextResponse.json(
-        { error: "Upstream Lalamove error", details: err.body || err.message },
-        { status: 502 }
+        { error: "Invalid JSON in request body" },
+        { status: 400 }
+      );
+    }
+
+    // Validate payload
+    if (!payload.stops || !Array.isArray(payload.stops) || payload.stops.length < 2) {
+      console.error("[API] Invalid stops:", payload.stops);
+      return NextResponse.json(
+        { error: "Invalid stops. At least 2 stops required" },
+        { status: 400 }
+      );
+    }
+
+    if (!payload.requesterContact?.name || !payload.requesterContact?.phone) {
+      console.error("[API] Missing requester contact:", payload.requesterContact);
+      return NextResponse.json(
+        { error: "Missing requester contact information" },
+        { status: 400 }
+      );
+    }
+
+    // Geocode stops if needed
+    try {
+      console.log("[API] Starting geocoding for", payload.stops.length, "stops");
+      const geocodedStops = await Promise.all(
+        payload.stops.map((stop: any, index: number) => geocodeStop(stop, index))
+      );
+      payload.stops = geocodedStops;
+      console.log("[API] Geocoding completed successfully");
+    } catch (error: any) {
+      console.error("[API] Geocoding error (non-fatal):", error);
+      // Continue with original stops
+    }
+
+    // Simulate API latency
+    await new Promise((r) => setTimeout(r, 500));
+    
+    const orderId = `MOCK-${Date.now()}`;
+    
+    try {
+      const delivery: MockDelivery = {
+        id: orderId,
+        status: "ASSIGNING_DRIVER",
+        stops: (payload.stops || []).map((s: any) => normalizeStop(s)),
+        driver: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      console.log('[API] Creating delivery document:', orderId);
+
+      // Use Admin SDK to store in Firestore
+      const db = admin.firestore();
+      await db.collection('mockDeliveries').doc(orderId).set(delivery);
+      
+      console.log('[API] Successfully created delivery:', orderId);
+      
+      return NextResponse.json(
+        { 
+          id: orderId,
+          status: delivery.status,
+          created_at: delivery.created_at
+        }, 
+        { 
+          status: 201,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    } catch (firestoreError: any) {
+      console.error('[API] Firestore error:', firestoreError);
+      
+      // Return mock ID even if Firestore fails
+      console.log('[API] Returning mock ID despite Firestore error:', orderId);
+      return NextResponse.json(
+        { 
+          id: orderId,
+          status: "ASSIGNING_DRIVER",
+          created_at: new Date().toISOString(),
+          warning: "Delivery created but not persisted to database"
+        }, 
+        { 
+          status: 201,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
     }
   } catch (err: any) {
     console.error("[API] Unexpected error:", err);
+    console.error("[API] Error stack:", err.stack);
+    
+    // Always return JSON
     return NextResponse.json(
-      { error: "internal server error", details: err.message },
-      { status: 500 }
+      { 
+        error: "Internal server error",
+        details: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
+        type: err.name || 'Error'
+      },
+      { 
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
     );
   }
 }

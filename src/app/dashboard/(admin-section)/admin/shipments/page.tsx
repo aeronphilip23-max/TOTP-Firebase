@@ -236,137 +236,171 @@ export default function ShipmentsTab() {
   }
 
   const handleAddShipment = async () => {
-    if (!newShipment.destination || !newShipment.selectedMaterialId || !newShipment.quantity || !newShipment.eta) {
-      showToast("Please fill in all fields", "error");
-      return
-    }
-
-    const selectedMaterial = getSelectedMaterial()
-    if (!selectedMaterial) {
-      showToast("Selected material not found", "error");
-      return
-    }
-
-    const shipmentQuantity = parseInt(newShipment.quantity, 10)
-    const shipmentId = `SH-${String(allShipments.length + 1).padStart(4, "0")}`
-    const materialsString = `${selectedMaterial.name} (${newShipment.quantity} ${selectedMaterial.unit})`
-    
-    const shipmentRecord = {
-      id: shipmentId,
-      destination: newShipment.destination,
-      status: "ASSIGNING_DRIVER",
-      eta: newShipment.eta,
-      materials: materialsString,
-    }
-
-    try {
-      setIsCreating(true)
-      const pickupLat = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LAT || '0');
-      const pickupLng = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LNG || '0');
-      const pickupAddress = process.env.NEXT_PUBLIC_WAREHOUSE_ADDRESS || "Warehouse";
-
-      const deliveryLat = newShipment.deliveryLat ?? 0;
-      const deliveryLng = newShipment.deliveryLng ?? 0;
-      const deliveryAddress = newShipment.deliveryAddress || newShipment.destination;
-
-      const response = await fetch('/api/lalamove/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          serviceType: 'TRUCK',
-          stops: [
-            { 
-              location: { lat: pickupLat, lng: pickupLng }, 
-              addresses: { en_PH: pickupAddress }
-            },
-            { 
-              location: { lat: deliveryLat, lng: deliveryLng }, 
-              addresses: { en_PH: deliveryAddress }
-            }
-          ],
-          requesterContact: {
-            name: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_NAME || "Sender",
-            phone: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_PHONE || ""
-          }
-        })
-      });
-
-      // Parse response safely: some errors can return HTML (e.g., 500 page)
-      const contentType = response.headers.get('content-type') || '';
-      const raw = await response.text();
-
-      if (!response.ok) {
-        // Try to extract JSON error if present
-        let message = raw;
-        if (contentType.includes('application/json')) {
-          try {
-            const errObj = JSON.parse(raw);
-            message = errObj.error || errObj.message || JSON.stringify(errObj);
-          } catch (e) {
-            // fallthrough to raw
-          }
-        }
-        throw new Error(message || 'Failed to create delivery');
-      }
-
-      // If response is JSON parse it, else show useful error with snippet
-      let lalamoveResp: any = null;
-      if (contentType.includes('application/json')) {
-        try {
-          lalamoveResp = JSON.parse(raw);
-        } catch (e) {
-          throw new Error('Invalid JSON response from Lalamove API');
-        }
-      } else {
-        // Got HTML or plain text instead of JSON
-        const snippet = raw.slice(0, 1000);
-        throw new Error('Unexpected response from Lalamove API: ' + snippet);
-      }
-
-      const lalamoveOrderId = lalamoveResp?.id || lalamoveResp?.orderId || null;
-
-      // Deduct from inventory
-      const newInventoryQuantity = selectedMaterial.quantity - shipmentQuantity
-      await updateDoc(doc(db, "inventory", newShipment.selectedMaterialId), {
-        quantity: newInventoryQuantity
-      })
-
-      // Persist shipment to Firestore including lalamoveOrderId
-      await setDoc(doc(db, "shipments", shipmentId), {
-        destination: shipmentRecord.destination,
-        status: shipmentRecord.status,
-        eta: shipmentRecord.eta,
-        materials: shipmentRecord.materials,
-        materialId: newShipment.selectedMaterialId,
-        quantity: shipmentQuantity,
-        lalamoveOrderId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-
-      // update local state
-      const newShipmentData = { 
-        ...shipmentRecord, 
-        lalamoveOrderId,
-        materialId: newShipment.selectedMaterialId,
-        quantity: shipmentQuantity
-      };
-      setAllShipments(prev => [...prev, newShipmentData as any]);
-      setShipments(prev => [...prev, newShipmentData as any]);
-
-      // Update materials list
-      await getMaterials()
-      
-      setShowAddShipmentModal(false)
-      setNewShipment({ destination: "", selectedMaterialId: "", quantity: "", eta: "", deliveryAddress: "", deliveryLat: undefined, deliveryLng: undefined })
-      showToast(`Shipment "${shipmentId}" created successfully!`);
-    } catch (error: any) {
-      console.error("Error creating shipment:", error);
-      showToast(error.message || "Failed to create shipment", "error");
-    } finally {
-      setIsCreating(false)
-    }
+  if (!newShipment.destination || !newShipment.selectedMaterialId || !newShipment.quantity || !newShipment.eta) {
+    showToast("Please fill in all fields", "error");
+    return;
   }
+
+  const selectedMaterial = getSelectedMaterial();
+  if (!selectedMaterial) {
+    showToast("Selected material not found", "error");
+    return;
+  }
+
+  const shipmentQuantity = parseInt(newShipment.quantity, 10);
+  const shipmentId = `SH-${String(allShipments.length + 1).padStart(4, "0")}`;
+  const materialsString = `${selectedMaterial.name} (${newShipment.quantity} ${selectedMaterial.unit})`;
+  
+  const shipmentRecord = {
+    id: shipmentId,
+    destination: newShipment.destination,
+    status: "ASSIGNING_DRIVER",
+    eta: newShipment.eta,
+    materials: materialsString,
+  };
+
+  try {
+    setIsCreating(true);
+    
+    // Validate environment variables
+    const pickupLat = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LAT || '0');
+    const pickupLng = Number(process.env.NEXT_PUBLIC_WAREHOUSE_LNG || '0');
+    const pickupAddress = process.env.NEXT_PUBLIC_WAREHOUSE_ADDRESS || "Warehouse";
+
+    if (!pickupLat || !pickupLng) {
+      throw new Error("Warehouse coordinates not configured");
+    }
+
+    const deliveryLat = newShipment.deliveryLat ?? pickupLat;
+    const deliveryLng = newShipment.deliveryLng ?? pickupLng;
+    const deliveryAddress = newShipment.deliveryAddress || newShipment.destination;
+
+    console.log("Creating delivery with stops:", {
+      pickup: { lat: pickupLat, lng: pickupLng, address: pickupAddress },
+      delivery: { lat: deliveryLat, lng: deliveryLng, address: deliveryAddress }
+    });
+
+    const response = await fetch('/api/lalamove/create', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        serviceType: 'TRUCK',
+        stops: [
+          { 
+            location: { lat: pickupLat, lng: pickupLng }, 
+            addresses: { en_PH: pickupAddress }
+          },
+          { 
+            location: { lat: deliveryLat, lng: deliveryLng }, 
+            addresses: { en_PH: deliveryAddress }
+          }
+        ],
+        requesterContact: {
+          name: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_NAME || "Sender",
+          phone: process.env.NEXT_PUBLIC_WAREHOUSE_CONTACT_PHONE || "+639123456789"
+        }
+      })
+    });
+
+    // Get response text first to handle both JSON and HTML errors
+    const responseText = await response.text();
+    
+    if (!response.ok) {
+      // Try to parse as JSON for structured errors
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(responseText);
+        errorMessage = errorJson.error || errorJson.details || errorJson.message || responseText;
+      } catch {
+        // If not JSON, use the text directly but truncate if it's HTML
+        if (responseText.includes('<!DOCTYPE html>') || responseText.includes('<html')) {
+          errorMessage = `Server returned HTML error page. Status: ${response.status}. Check server logs.`;
+        } else {
+          errorMessage = responseText.slice(0, 200); // Truncate long error messages
+        }
+      }
+      throw new Error(errorMessage);
+    }
+
+    // Parse successful response as JSON
+    let lalamoveResp: any;
+    try {
+      lalamoveResp = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error('Invalid JSON response from server: ' + responseText.slice(0, 200));
+    }
+
+    const lalamoveOrderId = lalamoveResp?.id || lalamoveResp?.orderId || null;
+
+    if (!lalamoveOrderId) {
+      throw new Error('No delivery ID received from delivery service');
+    }
+
+    // Deduct from inventory
+    const newInventoryQuantity = selectedMaterial.quantity - shipmentQuantity;
+    await updateDoc(doc(db, "inventory", newShipment.selectedMaterialId), {
+      quantity: newInventoryQuantity
+    });
+
+    // Persist shipment to Firestore including lalamoveOrderId
+    await setDoc(doc(db, "shipments", shipmentId), {
+      destination: shipmentRecord.destination,
+      status: shipmentRecord.status,
+      eta: shipmentRecord.eta,
+      materials: shipmentRecord.materials,
+      materialId: newShipment.selectedMaterialId,
+      quantity: shipmentQuantity,
+      lalamoveOrderId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    // Update local state
+    const newShipmentData = { 
+      ...shipmentRecord, 
+      lalamoveOrderId,
+      materialId: newShipment.selectedMaterialId,
+      quantity: shipmentQuantity
+    };
+    setAllShipments(prev => [...prev, newShipmentData as any]);
+    setShipments(prev => [...prev, newShipmentData as any]);
+
+    // Update materials list
+    await getMaterials();
+    
+    setShowAddShipmentModal(false);
+    setNewShipment({ 
+      destination: "", 
+      selectedMaterialId: "", 
+      quantity: "", 
+      eta: "", 
+      deliveryAddress: "", 
+      deliveryLat: undefined, 
+      deliveryLng: undefined 
+    });
+    showToast(`Shipment "${shipmentId}" created successfully!`);
+  } catch (error: any) {
+    console.error("Error creating shipment:", error);
+    
+    // Provide more user-friendly error messages
+    let userMessage = error.message || "Failed to create shipment";
+    
+    if (error.message.includes('HTML error page')) {
+      userMessage = "Server error occurred. Please check if the delivery service is running properly.";
+    } else if (error.message.includes('Failed to fetch')) {
+      userMessage = "Network error. Please check your connection and try again.";
+    } else if (error.message.includes('Warehouse coordinates')) {
+      userMessage = "Server configuration error. Please contact administrator.";
+    }
+    
+    showToast(userMessage, "error");
+  } finally {
+    setIsCreating(false);
+  }
+};
 
   const updateDeliveryStatus = async (
     shipmentId: string,

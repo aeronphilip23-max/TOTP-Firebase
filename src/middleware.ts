@@ -424,6 +424,7 @@ export async function middleware(request: NextRequest) {
           "/dashboard/admin/shipments",
           "/api/admin",
           "/api/reports",
+          "/api/lalamove",
         ],
         user: [
           "/dashboard/staff",
