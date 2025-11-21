@@ -95,14 +95,18 @@ function getClientIP(request: NextRequest): string {
   return 'unknown';
 }
 
-// Enhanced path traversal protection
+// 🚨 FIXED: Enhanced path traversal protection
 function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPath: string; isSuspicious: boolean } {
+  // 🚨 CRITICAL FIX: Allow normal paths first
+  const normalPaths = ['/', '/landingpage', '/auth/login', '/auth/register', '/verifyotp'];
+  if (normalPaths.includes(pathname)) {
+    return { isValid: true, cleanPath: pathname, isSuspicious: false };
+  }
+
   const suspiciousPatterns = [
     /\.\.\//g,
     /\.\.\\/g,
-    /\/+/g,
     /[<>]/g,
-    /\.\.$/,
     /\/\.\./,
     /\/\.\//,
     /\/etc\/passwd/,
@@ -112,7 +116,6 @@ function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPat
     /\.htaccess/,
     /\.sql/,
     /\/backup\//,
-    /\/admin\//i,
     /\/php/,
     /\/cgi-bin/,
   ];
@@ -128,13 +131,14 @@ function sanitizeAndValidatePath(pathname: string): { isValid: boolean; cleanPat
     }
   }
 
-  // Normalize path
+  // 🚨 FIXED: Normalize path but don't be too aggressive
   cleanPath = cleanPath
-    .replace(/\/+/g, '/')
-    .replace(/\/$/, '')
-    .replace(/^\/+/, '/');
+    .replace(/\/+/g, '/')  // Replace multiple slashes with single slash
+    .replace(/\/$/, '')    // Remove trailing slash
+    || '/';                // Ensure it doesn't become empty
 
-  const hasTraversal = /\.\.|%2e%2e|%2E%2E|\\|\.\.$|\.\.\/|\.\.\\/i.test(cleanPath);
+  // 🚨 FIXED: More specific traversal detection
+  const hasTraversal = /(?:^|\/)\.\.(?:\/|$)|\\|\/\/(?![\/])/i.test(cleanPath);
   
   if (hasTraversal || !cleanPath.startsWith('/')) {
     return { isValid: false, cleanPath: '/', isSuspicious: true };
@@ -222,15 +226,36 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const ip = getClientIP(request);
 
-  // Skip for static files and known good paths
+  // 🚨 CRITICAL FIX: Skip for static files and known good paths
   if (pathname.match(/\.(ico|png|jpg|jpeg|gif|webp|css|js|svg)$/)) {
     return NextResponse.next();
   }
 
-  // Enhanced path validation
+  // 🚨 CRITICAL FIX: Skip middleware entirely for public paths to prevent loops
+  const publicPaths = [
+    "/",
+    "/landingpage", 
+    "/auth/login",
+    "/auth/register",
+    "/verifyotp",
+    "/api/disable-mfa",
+    "/_next",
+    "/favicon.ico",
+  ];
+
+  const isPublicPath = publicPaths.some((path) => 
+    pathname === path || pathname.startsWith(path + '/')
+  );
+
+  if (isPublicPath) {
+    console.log(`✅ Allowing access to public route: ${pathname}`);
+    return NextResponse.next();
+  }
+
+  // Enhanced path validation - only for non-public paths
   const pathValidation = sanitizeAndValidatePath(pathname);
   if (!pathValidation.isValid) {
-    console.log(`🚨 Blocked malicious path: ${pathname} -> ${pathValidation.cleanPath}`);
+    console.log(`🚨 Blocked malicious path: ${pathname}`);
     
     // Track suspicious IP
     const suspiciousData = suspiciousIPs.get(ip) || { score: 0, lastOffense: Date.now() };
@@ -302,32 +327,8 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Public paths
-  const publicPaths = [
-    "/",
-    "/landingpage",
-    "/auth/login",
-    "/auth/register",
-    "/verifyotp",
-    "/api/disable-mfa",
-    "/_next",
-    "/favicon.ico",
-  ];
-
-  const isPublicPath = publicPaths.some((path) => 
-    cleanPathname === path || cleanPathname.startsWith(path + '/')
-  );
-
-  if (isPublicPath) {
-    const response = NextResponse.next();
-    response.headers.set('X-RateLimit-Limit', getRateLimitConfig(cleanPathname).max.toString());
-    response.headers.set('X-RateLimit-Remaining', rateLimit.remaining.toString());
-    response.headers.set('X-RateLimit-Reset', '60');
-    return response;
-  }
-
-  // Check if user is trying to access protected routes
-  if (cleanPathname.startsWith('/dashboard')) {
+  // 🚨 CRITICAL FIX: Check if user is trying to access protected routes (BOTH dashboard AND API)
+  if (cleanPathname.startsWith('/dashboard') || cleanPathname.startsWith('/api/')) {
     const token = request.cookies.get('idToken')?.value;
     
     // Check for MFA operation in cookies
@@ -350,18 +351,19 @@ export async function middleware(request: NextRequest) {
     
     if (!token) {
       console.log(`🔐 No token found for protected route: ${cleanPathname}, redirecting to login`);
-      return NextResponse.redirect(new URL('/auth/login', request.url));
+      // 🚨 Use temporary redirect (302) to prevent caching issues
+      return NextResponse.redirect(new URL('/auth/login', request.url), 302);
     }
 
     try {
       // Verify the token - but be more lenient during MFA operations
       await verifyIdToken(token);
       
-      // For protected dashboard routes, check role-based access
+      // For protected routes, check role-based access
       const auth = await checkAuth(request);
       if (!auth) {
         console.log(`🔐 Auth check failed for: ${cleanPathname}, redirecting to login`);
-        return NextResponse.redirect(new URL('/auth/login', request.url));
+        return NextResponse.redirect(new URL('/auth/login', request.url), 302);
       }
 
       // Role-based access control
@@ -405,7 +407,7 @@ export async function middleware(request: NextRequest) {
       ];
 
       const hasCommonAccess = commonPaths.some((commonPath) => 
-        cleanPathname === commonPath || commonPath.startsWith(commonPath + '/')
+        cleanPathname === commonPath || cleanPathname.startsWith(commonPath + '/')
       );
 
       if (!hasAccess && !hasCommonAccess) {
@@ -416,7 +418,7 @@ export async function middleware(request: NextRequest) {
         if (userRole === 'admin') defaultPage = '/dashboard/admin/dashboard';
         if (userRole === 'user') defaultPage = '/dashboard/staff';
         console.log(`🔄 Redirecting to: ${defaultPage}`);
-        return NextResponse.redirect(new URL(defaultPage, request.url));
+        return NextResponse.redirect(new URL(defaultPage, request.url), 302);
       }
 
       console.log(`✅ Access granted for role ${userRole} to ${cleanPathname}`);
@@ -436,7 +438,11 @@ export async function middleware(request: NextRequest) {
       
       // Otherwise redirect to login
       console.log(`🔐 Token verification failed for: ${cleanPathname}, redirecting to login`);
-      return NextResponse.redirect(new URL('/auth/login', request.url));
+      // 🚨 Clear invalid tokens and redirect
+      const response = NextResponse.redirect(new URL('/auth/login', request.url), 302);
+      response.cookies.delete('idToken');
+      response.cookies.delete('userRole');
+      return response;
     }
   }
 
