@@ -1,20 +1,21 @@
 {
-  "functions": [
-    {
-      "codebase": "default",
-      "predeploy": [
-        "npm --prefix \"$RESOURCE_DIR\" run build"
-      ],
-      "source": "functions",
-      "ignore": [
-        "node_modules",
-        ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
-        "*.local"
-      ]
-    }
-  ],
+  "functions": {
+    "source": "functions",
+    "codebase": "default",
+    "predeploy": [
+      "npm --prefix \"$RESOURCE_DIR\" run build"
+    ],
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "*.local"
+    ],
+    "runtime": "nodejs18",
+    "timeout": "300s",
+    "memory": "512MB"
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"

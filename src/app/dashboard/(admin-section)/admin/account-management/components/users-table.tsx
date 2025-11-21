@@ -1,6 +1,6 @@
 "use client"
 
-import { MoreVertical, Mail, MailCheck, UserX, UserCheck, Trash2, Loader2, Crown, Users, AlertTriangle } from "lucide-react"
+import { MoreVertical, Mail, MailCheck, Trash2, Loader2, Crown, Users, AlertTriangle } from "lucide-react"
 import { UserData, UserRole } from "../types/user"
 import { useState } from "react"
 
@@ -63,7 +63,6 @@ export default function UsersTable({
             <tr>
               <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">User</th>
               <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Role</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Status</th>
               <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Created</th>
               <th className="px-6 py-3 text-left text-sm font-semibold text-[oklch(0.18_0.08_250)]">Actions</th>
             </tr>
@@ -105,15 +104,6 @@ export default function UsersTable({
                       ))}
                     </select>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      user.status === "active" 
-                        ? "bg-green-100 text-green-700" 
-                        : "bg-red-100 text-red-700"
-                    }`}>
-                      {user.status === "active" ? "Active" : "Inactive"}
-                    </span>
-                  </td>
                   <td className="px-6 py-4 text-sm text-[oklch(0.45_0_0)]">
                     {formatDate(user.createdAt)}
                   </td>
@@ -133,30 +123,6 @@ export default function UsersTable({
 
                       {activeDropdown === user.id && (
                         <div className="absolute right-0 top-8 bg-white border border-[oklch(0.88_0_0)] rounded-lg shadow-lg z-10 min-w-32">
-                          {user.status === "active" ? (
-                            <button
-                              onClick={() => {
-                                onUserAction("disable", user.id)
-                                setActiveDropdown(null)
-                              }}
-                              className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                            >
-                              <UserX className="h-4 w-4" />
-                              Disable
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                onUserAction("enable", user.id)
-                                setActiveDropdown(null)
-                              }}
-                              className="w-full flex items-center gap-2 px-4 py-2 text-sm text-green-600 hover:bg-green-50 transition-colors"
-                            >
-                              <UserCheck className="h-4 w-4" />
-                              Enable
-                            </button>
-                          )}
-                          
                           {!user.emailVerified && (
                             <button
                               onClick={() => {
