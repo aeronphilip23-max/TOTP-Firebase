@@ -24,6 +24,22 @@ const STOCK_LEVELS = {
   "In Stock": (qty: number) => qty >= 10 && qty <= 100,
 }
 
+// Validation constants
+const VALIDATION_RULES = {
+  name: {
+    maxLength: 100,
+    minLength: 1,
+    pattern: /^[a-zA-Z0-9\s\-_.,()&]+$/ // Allows letters, numbers, spaces, and common punctuation
+  },
+  quantity: {
+    max: 999999,
+    min: 0
+  },
+  location: {
+    maxLength: 50
+  }
+}
+
 // Toast Notification Component
 const ToastNotification = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
   useEffect(() => {
@@ -124,6 +140,71 @@ const EllipsisMenu = ({ material, onEdit, onDelete }: { material: any, onEdit: (
   );
 };
 
+// Validation functions
+const validateName = (name: string): string | null => {
+  if (!name.trim()) {
+    return "Material name is required";
+  }
+  if (name.length > VALIDATION_RULES.name.maxLength) {
+    return `Material name cannot exceed ${VALIDATION_RULES.name.maxLength} characters`;
+  }
+  if (name.length < VALIDATION_RULES.name.minLength) {
+    return `Material name must be at least ${VALIDATION_RULES.name.minLength} character`;
+  }
+  if (!VALIDATION_RULES.name.pattern.test(name)) {
+    return "Material name contains invalid characters. Only letters, numbers, spaces, and basic punctuation are allowed.";
+  }
+  return null;
+};
+
+const validateQuantity = (quantity: string): string | null => {
+  if (!quantity.trim()) {
+    return "Quantity is required";
+  }
+  
+  const numValue = parseInt(quantity, 10);
+  if (isNaN(numValue)) {
+    return "Quantity must be a valid number";
+  }
+  if (numValue < VALIDATION_RULES.quantity.min) {
+    return `Quantity cannot be less than ${VALIDATION_RULES.quantity.min}`;
+  }
+  if (numValue > VALIDATION_RULES.quantity.max) {
+    return `Quantity cannot exceed ${VALIDATION_RULES.quantity.max.toLocaleString()}`;
+  }
+  return null;
+};
+
+const validateUnit = (unit: string): string | null => {
+  if (!unit.trim()) {
+    return "Unit of measurement is required";
+  }
+  if (!UNIT_MEASUREMENTS.includes(unit)) {
+    return "Please select a valid unit of measurement";
+  }
+  return null;
+};
+
+const validateCategory = (category: string): string | null => {
+  if (!category.trim()) {
+    return "Category is required";
+  }
+  if (!CATEGORIES.includes(category)) {
+    return "Please select a valid category";
+  }
+  return null;
+};
+
+const validateLocation = (location: string): string | null => {
+  if (!location.trim()) {
+    return "Location is required";
+  }
+  if (location.length > VALIDATION_RULES.location.maxLength) {
+    return `Location cannot exceed ${VALIDATION_RULES.location.maxLength} characters`;
+  }
+  return null;
+};
+
 export default function InventoryTab() {
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false)
   const [showFilterInventoryModal, setShowFilterInventoryModal] = useState(false)
@@ -141,6 +222,7 @@ export default function InventoryTab() {
   const [selectedCategory, setSelectedCategory] = useState("All Categories")
   const [selectedStockLevel, setSelectedStockLevel] = useState("All")
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
 
   const [newMaterial, setNewMaterial] = useState({
     name: "",
@@ -214,33 +296,51 @@ export default function InventoryTab() {
     }
 
     setMaterials(filtered);
-    }
+  }
 
-    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const query = e.target.value;
-      setSearchQuery(query);
-      applyFilters(query, selectedCategory, selectedStockLevel);
-    }
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    applyFilters(query, selectedCategory, selectedStockLevel);
+  }
 
-    const handleAddMaterial = async () => {
-    if (!newMaterial.name || !newMaterial.category || !newMaterial.quantity || !newMaterial.unit) {
-      showToast("Please fill in all fields", "error");
-      return
-    }
+  const validateMaterialForm = (material: typeof newMaterial, isEdit: boolean = false): boolean => {
+    const errors: Record<string, string> = {};
+    
+    const nameError = validateName(material.name);
+    if (nameError) errors.name = nameError;
+    
+    const quantityError = validateQuantity(material.quantity);
+    if (quantityError) errors.quantity = quantityError;
+    
+    const unitError = validateUnit(material.unit);
+    if (unitError) errors.unit = unitError;
+    
+    const categoryError = validateCategory(material.category);
+    if (categoryError) errors.category = categoryError;
+    
+    const locationError = validateLocation(material.location);
+    if (locationError) errors.location = locationError;
 
-    const quantity = Number.parseInt(newMaterial.quantity);
-    if (quantity < 0) {
-      showToast("Quantity cannot be negative", "error");
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  const handleAddMaterial = async () => {
+    if (!validateMaterialForm(newMaterial)) {
+      showToast("Please fix the validation errors before submitting", "error");
       return;
     }
 
+    const quantity = Number.parseInt(newMaterial.quantity);
+    
     const material = {
       id: `MAT-${String(allMaterials.length + 1).padStart(4, "0")}`,
-      name: newMaterial.name,
+      name: newMaterial.name.trim(),
       category: newMaterial.category,
       quantity: quantity,
       unit: newMaterial.unit,
-      location: newMaterial.location,
+      location: newMaterial.location.trim(),
     }
 
     try {
@@ -252,11 +352,9 @@ export default function InventoryTab() {
         location: material.location,
       });
 
-      // FIX: Update state immediately instead of calling getMaterials()
       const updatedAllMaterials = [...allMaterials, material];
       setAllMaterials(updatedAllMaterials);
       
-      // FIX: Also update the filtered materials if it passes current filters
       const passesFilters = applyFiltersToSingleItem(material, searchQuery, selectedCategory, selectedStockLevel);
       if (passesFilters) {
         const updatedMaterials = [...materials, material];
@@ -265,6 +363,7 @@ export default function InventoryTab() {
 
       setShowAddMaterialModal(false)
       setNewMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" })
+      setValidationErrors({})
       showToast(`Material "${material.name}" added successfully!`);
     } catch (error) {
       showToast("Failed to add material", "error");
@@ -272,7 +371,6 @@ export default function InventoryTab() {
     }
   }
 
-  // Add this helper function
   const applyFiltersToSingleItem = (material: any, query: string, category: string, stockLevel: string) => {
     if (query) {
       const passesQuery = 
@@ -305,127 +403,159 @@ export default function InventoryTab() {
       unit: material.unit || "",
       location: material.location || "Warehouse",
     });
+    setValidationErrors({});
     setShowEditMaterialModal(true);
   }
 
-const openDeleteModal = (material: any) => {
-  setSelectedMaterial(material);
-  setShowDeleteModal(true);
-}
-
-const handleEditMaterial = async () => {
-  if (!selectedMaterial?.id || !editMaterial.name || !editMaterial.category || !editMaterial.quantity || !editMaterial.unit) {
-    showToast("Please fill in all fields", "error");
-    return
+  const openDeleteModal = (material: any) => {
+    setSelectedMaterial(material);
+    setShowDeleteModal(true);
   }
 
-  const quantity = Number.parseInt(editMaterial.quantity);
-  if (quantity < 0) {
-    showToast("Quantity cannot be negative", "error");
-    return;
-  }
-
-  try {
-    // Track changes for the notification
-    const changes = [];
-    if (selectedMaterial.name !== editMaterial.name) changes.push("name");
-    if (selectedMaterial.category !== editMaterial.category) changes.push("category");
-    if (selectedMaterial.quantity !== quantity) changes.push("quantity");
-    if (selectedMaterial.unit !== editMaterial.unit) changes.push("unit");
-    if (selectedMaterial.location !== editMaterial.location) changes.push("location");
-
-    await updateDoc(doc(db, "inventory", selectedMaterial.id), {
-      name: editMaterial.name,
-      category: editMaterial.category,
-      quantity: quantity,
-      unit: editMaterial.unit,
-      location: editMaterial.location,
-    });
-
-    // FIX: Update both allMaterials and materials state immediately
-    const updatedAllMaterials = allMaterials.map(m =>
-      m.id === selectedMaterial.id ? { 
-        ...m, 
-        name: editMaterial.name,
-        category: editMaterial.category,
-        quantity: quantity,
-        unit: editMaterial.unit,
-        location: editMaterial.location,
-      } : m
-    );
-    
-    setAllMaterials(updatedAllMaterials);
-    
-    // FIX: Update the filtered materials list too
-    const updatedMaterials = materials.map(m =>
-      m.id === selectedMaterial.id ? { 
-        ...m, 
-        name: editMaterial.name,
-        category: editMaterial.category,
-        quantity: quantity,
-        unit: editMaterial.unit,
-        location: editMaterial.location,
-      } : m
-    );
-    
-    setMaterials(updatedMaterials);
-    
-    setShowEditMaterialModal(false);
-    setSelectedMaterial(null);
-    setEditMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" });
-    
-    if (changes.length > 0) {
-      showToast(`Material updated! Changed: ${changes.join(", ")}`, "info");
-    } else {
-      showToast("No changes were made", "info");
+  const handleEditMaterial = async () => {
+    if (!validateMaterialForm(editMaterial, true)) {
+      showToast("Please fix the validation errors before submitting", "error");
+      return;
     }
-  } catch (err: any) {
-    console.error("Failed to update material:", err);
-    showToast("Failed to update material", "error");
+
+    const quantity = Number.parseInt(editMaterial.quantity);
+
+    try {
+      const changes = [];
+      if (selectedMaterial?.name !== editMaterial.name) changes.push("name");
+      if (selectedMaterial?.category !== editMaterial.category) changes.push("category");
+      if (selectedMaterial?.quantity !== quantity) changes.push("quantity");
+      if (selectedMaterial?.unit !== editMaterial.unit) changes.push("unit");
+      if (selectedMaterial?.location !== editMaterial.location) changes.push("location");
+
+      await updateDoc(doc(db, "inventory", selectedMaterial!.id!), {
+        name: editMaterial.name.trim(),
+        category: editMaterial.category,
+        quantity: quantity,
+        unit: editMaterial.unit,
+        location: editMaterial.location.trim(),
+      });
+
+      const updatedAllMaterials = allMaterials.map(m =>
+        m.id === selectedMaterial!.id ? { 
+          ...m, 
+          name: editMaterial.name.trim(),
+          category: editMaterial.category,
+          quantity: quantity,
+          unit: editMaterial.unit,
+          location: editMaterial.location.trim(),
+        } : m
+      );
+      
+      setAllMaterials(updatedAllMaterials);
+      
+      const updatedMaterials = materials.map(m =>
+        m.id === selectedMaterial!.id ? { 
+          ...m, 
+          name: editMaterial.name.trim(),
+          category: editMaterial.category,
+          quantity: quantity,
+          unit: editMaterial.unit,
+          location: editMaterial.location.trim(),
+        } : m
+      );
+      
+      setMaterials(updatedMaterials);
+      
+      setShowEditMaterialModal(false);
+      setSelectedMaterial(null);
+      setEditMaterial({ name: "", category: "", quantity: "", unit: "", location: "Warehouse" });
+      setValidationErrors({});
+      
+      if (changes.length > 0) {
+        showToast(`Material updated! Changed: ${changes.join(", ")}`, "info");
+      } else {
+        showToast("No changes were made", "info");
+      }
+    } catch (err: any) {
+      console.error("Failed to update material:", err);
+      showToast("Failed to update material", "error");
+    }
   }
-}
 
-const handleDeleteMaterial = async () => {
-  if (!selectedMaterial?.id) return;
+  const handleDeleteMaterial = async () => {
+    if (!selectedMaterial?.id) return;
 
-  try {
-    await deleteDoc(doc(db, "inventory", selectedMaterial.id));
+    try {
+      await deleteDoc(doc(db, "inventory", selectedMaterial.id));
 
-    // FIX: Update both allMaterials and materials state immediately
-    const updatedAllMaterials = allMaterials.filter(m => m.id !== selectedMaterial.id);
-    setAllMaterials(updatedAllMaterials);
-    
-    // FIX: Update the filtered materials list too
-    const updatedMaterials = materials.filter(m => m.id !== selectedMaterial.id);
-    setMaterials(updatedMaterials);
-    
-    setShowDeleteModal(false);
-    showToast(`Material "${selectedMaterial.name}" deleted successfully!`, "info");
-    setSelectedMaterial(null);
-  } catch (err: any) {
-    console.error("Failed to delete material:", err);
-    showToast("Failed to delete material", "error");
+      const updatedAllMaterials = allMaterials.filter(m => m.id !== selectedMaterial.id);
+      setAllMaterials(updatedAllMaterials);
+      
+      const updatedMaterials = materials.filter(m => m.id !== selectedMaterial.id);
+      setMaterials(updatedMaterials);
+      
+      setShowDeleteModal(false);
+      showToast(`Material "${selectedMaterial.name}" deleted successfully!`, "info");
+      setSelectedMaterial(null);
+    } catch (err: any) {
+      console.error("Failed to delete material:", err);
+      showToast("Failed to delete material", "error");
+    }
   }
-}
 
-  const handleQuantityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleQuantityChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const value = e.target.value;
     
     if (value === "") {
-      setEditMaterial({ ...editMaterial, quantity: "" });
+      if (isEdit) {
+        setEditMaterial({ ...editMaterial, quantity: "" });
+      } else {
+        setNewMaterial({ ...newMaterial, quantity: "" });
+      }
       return;
     }
     
     const numValue = parseInt(value, 10);
-    if (!isNaN(numValue) && numValue >= 0) {
-      setEditMaterial({ ...editMaterial, quantity: value });
+    if (!isNaN(numValue) && numValue >= 0 && numValue <= VALIDATION_RULES.quantity.max) {
+      if (isEdit) {
+        setEditMaterial({ ...editMaterial, quantity: value });
+      } else {
+        setNewMaterial({ ...newMaterial, quantity: value });
+      }
     }
+  }
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
+    const value = e.target.value;
+    if (value.length <= VALIDATION_RULES.name.maxLength) {
+      if (isEdit) {
+        setEditMaterial({ ...editMaterial, name: value });
+      } else {
+        setNewMaterial({ ...newMaterial, name: value });
+      }
+    }
+  }
+
+  const handleLocationChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
+    const value = e.target.value;
+    if (value.length <= VALIDATION_RULES.location.maxLength) {
+      if (isEdit) {
+        setEditMaterial({ ...editMaterial, location: value });
+      } else {
+        setNewMaterial({ ...newMaterial, location: value });
+      }
+    }
+  }
+
+  const clearValidationError = (field: string) => {
+    setValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[field];
+      return newErrors;
+    });
   }
 
   const getStockLevelBadge = (quantity: number | undefined) => {
     if (!quantity) return { label: "Out of Stock", color: "bg-gray-100 text-gray-700" };
-    if (quantity < 100) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
-    if (quantity >= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
+    if (quantity < 10) return { label: "Low Stock", color: "bg-red-100 text-red-700" };
+    if (quantity >= 10 && quantity <= 100) return { label: "In Stock", color: "bg-green-100 text-green-700" };
+    return { label: "High Stock", color: "bg-blue-100 text-blue-700" };
   }
 
   return (
@@ -540,7 +670,10 @@ const handleDeleteMaterial = async () => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Add New Material</h2>
               <button
-                onClick={() => setShowAddMaterialModal(false)}
+                onClick={() => {
+                  setShowAddMaterialModal(false);
+                  setValidationErrors({});
+                }}
                 className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
               >
                 <X className="h-5 w-5" />
@@ -548,73 +681,132 @@ const handleDeleteMaterial = async () => {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material Name</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Material Name
+                  <span className="text-red-500 ml-1">*</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {newMaterial.name.length}/{VALIDATION_RULES.name.maxLength}
+                  </span>
+                </label>
                 <input
                   type="text"
                   value={newMaterial.name}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => handleNameChange(e, false)}
+                  onBlur={() => clearValidationError('name')}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.name ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                   placeholder="e.g., Steel Beams"
+                  maxLength={VALIDATION_RULES.name.maxLength}
                 />
+                {validationErrors.name && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.name}</p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Category
+                  <span className="text-red-500 ml-1">*</span>
+                </label>
                 <select
                   value={newMaterial.category}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, category: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => {
+                    setNewMaterial({ ...newMaterial, category: e.target.value });
+                    clearValidationError('category');
+                  }}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.category ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                 >
                   <option value="">Select category</option>
                   {CATEGORIES.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
+                {validationErrors.category && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.category}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Quantity</label>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                    Quantity
+                    <span className="text-red-500 ml-1">*</span>
+                  </label>
                   <input
                     type="number"
                     value={newMaterial.quantity}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === "" || (parseInt(value, 10) >= 0)) {
-                        setNewMaterial({ ...newMaterial, quantity: value });
-                      }
-                    }}
+                    onChange={(e) => handleQuantityChange(e, false)}
+                    onBlur={() => clearValidationError('quantity')}
                     min="0"
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                    max={VALIDATION_RULES.quantity.max}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                      validationErrors.quantity ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                    }`}
                     placeholder="0"
                   />
+                  {validationErrors.quantity && (
+                    <p className="text-red-500 text-xs mt-1">{validationErrors.quantity}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max: {VALIDATION_RULES.quantity.max.toLocaleString()}
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                    Unit
+                    <span className="text-red-500 ml-1">*</span>
+                  </label>
                   <select
                     value={newMaterial.unit}
-                    onChange={(e) => setNewMaterial({ ...newMaterial, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                    onChange={(e) => {
+                      setNewMaterial({ ...newMaterial, unit: e.target.value });
+                      clearValidationError('unit');
+                    }}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                      validationErrors.unit ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                    }`}
                   >
                     <option value="">Select unit</option>
                     {UNIT_MEASUREMENTS.map(unit => (
                       <option key={unit} value={unit}>{unit}</option>
                     ))}
                   </select>
+                  {validationErrors.unit && (
+                    <p className="text-red-500 text-xs mt-1">{validationErrors.unit}</p>
+                  )}
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Location</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Location
+                  <span className="text-red-500 ml-1">*</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {newMaterial.location.length}/{VALIDATION_RULES.location.maxLength}
+                  </span>
+                </label>
                 <input
                   type="text"
                   value={newMaterial.location}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, location: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => handleLocationChange(e, false)}
+                  onBlur={() => clearValidationError('location')}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.location ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                   placeholder="Warehouse"
+                  maxLength={VALIDATION_RULES.location.maxLength}
                 />
+                {validationErrors.location && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.location}</p>
+                )}
               </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowAddMaterialModal(false)}
+                onClick={() => {
+                  setShowAddMaterialModal(false);
+                  setValidationErrors({});
+                }}
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Cancel
@@ -637,7 +829,10 @@ const handleDeleteMaterial = async () => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-[oklch(0.18_0.08_250)]">Edit Material</h2>
               <button
-                onClick={() => setShowEditMaterialModal(false)}
+                onClick={() => {
+                  setShowEditMaterialModal(false);
+                  setValidationErrors({});
+                }}
                 className="text-[oklch(0.45_0_0)] hover:text-[oklch(0.18_0.08_250)]"
               >
                 <X className="h-5 w-5" />
@@ -645,68 +840,132 @@ const handleDeleteMaterial = async () => {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Material Name</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Material Name
+                  <span className="text-red-500 ml-1">*</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {editMaterial.name.length}/{VALIDATION_RULES.name.maxLength}
+                  </span>
+                </label>
                 <input
                   type="text"
                   value={editMaterial.name}
-                  onChange={(e) => setEditMaterial({ ...editMaterial, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => handleNameChange(e, true)}
+                  onBlur={() => clearValidationError('name')}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.name ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                   placeholder="e.g., Steel Beams"
+                  maxLength={VALIDATION_RULES.name.maxLength}
                 />
+                {validationErrors.name && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.name}</p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Category</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Category
+                  <span className="text-red-500 ml-1">*</span>
+                </label>
                 <select
                   value={editMaterial.category}
-                  onChange={(e) => setEditMaterial({ ...editMaterial, category: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => {
+                    setEditMaterial({ ...editMaterial, category: e.target.value });
+                    clearValidationError('category');
+                  }}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.category ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                 >
                   <option value="">Select category</option>
                   {CATEGORIES.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
+                {validationErrors.category && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.category}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Quantity</label>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                    Quantity
+                    <span className="text-red-500 ml-1">*</span>
+                  </label>
                   <input
                     type="number"
                     value={editMaterial.quantity}
-                    onChange={handleQuantityChange}
+                    onChange={(e) => handleQuantityChange(e, true)}
+                    onBlur={() => clearValidationError('quantity')}
                     min="0"
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                    max={VALIDATION_RULES.quantity.max}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                      validationErrors.quantity ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                    }`}
                     placeholder="0"
                   />
+                  {validationErrors.quantity && (
+                    <p className="text-red-500 text-xs mt-1">{validationErrors.quantity}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max: {VALIDATION_RULES.quantity.max.toLocaleString()}
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Unit</label>
+                  <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                    Unit
+                    <span className="text-red-500 ml-1">*</span>
+                  </label>
                   <select
                     value={editMaterial.unit}
-                    onChange={(e) => setEditMaterial({ ...editMaterial, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                    onChange={(e) => {
+                      setEditMaterial({ ...editMaterial, unit: e.target.value });
+                      clearValidationError('unit');
+                    }}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                      validationErrors.unit ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                    }`}
                   >
                     <option value="">Select unit</option>
                     {UNIT_MEASUREMENTS.map(unit => (
                       <option key={unit} value={unit}>{unit}</option>
                     ))}
                   </select>
+                  {validationErrors.unit && (
+                    <p className="text-red-500 text-xs mt-1">{validationErrors.unit}</p>
+                  )}
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">Location</label>
+                <label className="block text-sm font-medium text-[oklch(0.18_0.08_250)] mb-1">
+                  Location
+                  <span className="text-red-500 ml-1">*</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {editMaterial.location.length}/{VALIDATION_RULES.location.maxLength}
+                  </span>
+                </label>
                 <input
                   type="text"
                   value={editMaterial.location}
-                  onChange={(e) => setEditMaterial({ ...editMaterial, location: e.target.value })}
-                  className="w-full px-3 py-2 border border-[oklch(0.88_0_0)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)]"
+                  onChange={(e) => handleLocationChange(e, true)}
+                  onBlur={() => clearValidationError('location')}
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[oklch(0.68_0.19_35)] ${
+                    validationErrors.location ? 'border-red-500' : 'border-[oklch(0.88_0_0)]'
+                  }`}
                   placeholder="Warehouse"
+                  maxLength={VALIDATION_RULES.location.maxLength}
                 />
+                {validationErrors.location && (
+                  <p className="text-red-500 text-xs mt-1">{validationErrors.location}</p>
+                )}
               </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowEditMaterialModal(false)}
+                onClick={() => {
+                  setShowEditMaterialModal(false);
+                  setValidationErrors({});
+                }}
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors"
               >
                 Cancel

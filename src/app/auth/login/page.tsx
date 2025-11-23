@@ -17,7 +17,7 @@ import {
 } from "firebase/auth"
 import { doc, getDoc, getFirestore } from "firebase/firestore"
 import { auth } from "@/src/lib/firebase"
-import { Package, Eye, EyeOff, ArrowLeft, Mail, AlertCircle } from "lucide-react"
+import { Package, Eye, EyeOff, ArrowLeft, Mail, AlertCircle, Clock, CheckCircle2 } from "lucide-react"
 import { 
   trackFailedLogin, 
   resetFailedAttempts,
@@ -46,21 +46,70 @@ const Login = () => {
   const [emailNotVerified, setEmailNotVerified] = useState(false);
   const [resendVerificationLoading, setResendVerificationLoading] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
+  const [countdown, setCountdown] = useState<string>("");
+  const [resetSuccess, setResetSuccess] = useState(false)
   const router = useRouter()
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (!blockUntil) {
+      setCountdown("");
+      return;
+    }
+
+    const updateCountdown = () => {
+      const now = Date.now();
+      const timeLeft = blockUntil - now;
+
+      if (timeLeft <= 0) {
+        setIsAccountBlocked(false);
+        setBlockUntil(null);
+        setCountdown("");
+        return;
+      }
+
+      // Format countdown display
+      const minutes = Math.floor(timeLeft / 60000);
+      const seconds = Math.floor((timeLeft % 60000) / 1000);
+      setCountdown(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+    };
+
+    // Update immediately
+    updateCountdown();
+
+    // Update every second
+    const interval = setInterval(updateCountdown, 1000);
+
+    return () => clearInterval(interval);
+  }, [blockUntil]);
+
+  // Calculate progressive block duration (5 minutes + 5 minutes each subsequent block, max 24 hours)
+  const calculateBlockDuration = (blockCount: number): number => {
+    const baseMinutes = 5;
+    const progressiveMinutes = baseMinutes + (baseMinutes * blockCount);
+    const maxMinutes = 24 * 60; // 24 hours in minutes
+    return Math.min(progressiveMinutes, maxMinutes) * 60 * 1000; // Convert to milliseconds
+  };
 
   // Helper to display progressive block duration
   const getBlockDurationDisplay = (blockCount: number): string => {
-    const baseMinutes = 15;
-    const progressiveMinutes = baseMinutes * Math.pow(2, blockCount);
-    const finalMinutes = Math.min(progressiveMinutes, 24 * 60);
-    
-    if (finalMinutes < 60) {
-      return `${finalMinutes} minutes`;
-    } else if (finalMinutes < 24 * 60) {
-      const hours = Math.ceil(finalMinutes / 60);
-      return `${hours} hour${hours > 1 ? 's' : ''}`;
+    if (blockCount === 1) {
+      return "5 minutes";
+    } else if (blockCount === 2) {
+      return "10 minutes";
     } else {
-      return "24 hours";
+      const baseMinutes = 15;
+      const progressiveMinutes = baseMinutes * Math.pow(2, blockCount - 3);
+      const finalMinutes = Math.min(progressiveMinutes, 24 * 60);
+      
+      if (finalMinutes < 60) {
+        return `${finalMinutes} minutes`;
+      } else if (finalMinutes < 24 * 60) {
+        const hours = Math.ceil(finalMinutes / 60);
+        return `${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        return "24 hours";
+      }
     }
   };
 
@@ -68,6 +117,13 @@ const Login = () => {
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
+  };
+
+  // FIXED: Check if account is currently blocked - proper validation
+  const isCurrentlyBlocked = (): boolean => {
+    if (!blockUntil) return false;
+    const now = Date.now();
+    return now < blockUntil;
   };
 
   // Function to set ID token and user role as cookies for middleware
@@ -179,7 +235,7 @@ const Login = () => {
     }
   };
 
-  // FIXED HANDLE SUBMIT - WITH PROPER EMAIL VALIDATION AND BRUTE FORCE LOGIC
+  // FIXED HANDLE SUBMIT - WITH PROPER BRUTE FORCE PROTECTION VALIDATION
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
@@ -188,30 +244,16 @@ const Login = () => {
       return;
     }
 
-    // ✅ ADDED: Validate email format with @ symbol
+    // ✅ Validate email format with @ symbol
     if (!validateEmail(email)) {
       setError("Please enter a valid email address with @ symbol.");
       return;
     }
 
-    // Check if account is blocked using Firestore rate limiting
-    let status;
-    try {
-      status = await checkRateLimit(email);
-      console.log("Rate limit status:", status);
-    } catch (error) {
-      console.error("Error checking rate limit:", error);
-      // If rate limit check fails, continue with login attempt
-      // Don't block the user due to a rate limit service error
-    }
-
-    if (status?.isBlocked && status.blockUntil) {
-      setIsAccountBlocked(true);
-      setBlockUntil(status.blockUntil);
-      setBlockCount(status.blockCount || 0);
-      const blockUntilTime = new Date(status.blockUntil);
-      const blockDuration = getBlockDurationDisplay(status.blockCount || 0);
-      setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
+    // Check if account is currently blocked using proper validation
+    if (isCurrentlyBlocked() && blockUntil) {
+      const blockDuration = getBlockDurationDisplay(blockCount);
+      setError(`${blockDuration}.${countdown}`);
       return;
     }
 
@@ -264,7 +306,7 @@ const Login = () => {
     } catch (err: any) {
       console.log("Login error:", err);
       
-      // ✅ FIXED: Handle authentication errors with proper logic
+      // Handle authentication errors with proper logic
       if (err?.code === "auth/user-not-found") {
         // Email doesn't exist in the system - show unauthorized message
         setError("Not authorized email. Please check your email address.");
@@ -289,9 +331,8 @@ const Login = () => {
           
           if (newStatus.isBlocked && newStatus.blockUntil) {
             // Account is now blocked - show our custom blocking message
-            const blockUntilTime = new Date(newStatus.blockUntil);
             const blockDuration = getBlockDurationDisplay(newStatus.blockCount || 0);
-            setError(`Too many failed attempts. Account locked for ${blockDuration} until ${blockUntilTime.toLocaleTimeString()}`);
+            setError(` ${countdown}`);
           } else {
             // Account not blocked yet - show remaining attempts
             const attemptsLeft = 5 - newStatus.attempts;
@@ -400,7 +441,7 @@ const Login = () => {
       return;
     }
 
-    // ✅ ADDED: Validate email format for forgot password
+    // Validate email format for forgot password
     if (!validateEmail(resetEmailValue.trim())) {
       setError("Please enter a valid email address with @ symbol.");
       return;
@@ -411,9 +452,8 @@ const Login = () => {
 
     try {
       await sendPasswordResetEmail(auth, resetEmailValue.trim());
-      alert("Password reset email sent! Check your inbox (including spam).");
-      setShowForgotDialog(false);
-      setResetEmailValue("");
+      setResetSuccess(true);
+      setError("");
     } catch (err: any) {
       let errorMessage = "An unexpected error occurred.";
       switch (err?.code) {
@@ -427,9 +467,17 @@ const Login = () => {
           errorMessage = err?.message || "An unexpected error occurred.";
       }
       setError(errorMessage);
+      setResetSuccess(false);
     } finally {
       setResetLoading(false);
     }
+  };
+
+  const handleCloseForgotDialog = () => {
+    setShowForgotDialog(false);
+    setResetEmailValue("");
+    setError("");
+    setResetSuccess(false);
   };
 
   // Toggle password visibility
@@ -463,19 +511,8 @@ const Login = () => {
     }
   };
 
-  // Format date and time for display
-  const formatBlockDateTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString();
-  };
 
-  // FIXED: Check if account is currently blocked - always returns boolean
-  const isCurrentlyBlocked = (): boolean => {
-    if (!isAccountBlocked || !blockUntil) {
-      return false;
-    }
-    return Date.now() < blockUntil;
-  };
-
+  
   return (
     <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)] flex items-center justify-center p-6 relative">
       {/* Back Button */}
@@ -531,23 +568,31 @@ const Login = () => {
           )}
 
           {/* BRUTE FORCE PROTECTION WARNINGS */}
-          {failedAttempts > 0 && !mfaRequired && !isCurrentlyBlocked() && !emailNotVerified && (
+          {/* {failedAttempts > 0 && !mfaRequired && !isCurrentlyBlocked() && !emailNotVerified && (
             <div className={`p-3 rounded-lg text-sm mb-4 ${
               failedAttempts >= 3 
                 ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' 
                 : 'bg-yellow-100 text-yellow-700 border border-yellow-300'
             }`}>
-              <p>⚠️ {failedAttempts} failed attempt(s). {5 - failedAttempts} attempts remaining.</p>
+              <p>⚠️ {failedAttempts} failed attempt(s). {5 - failedAttempts} attempt(s) remaining.</p>
             </div>
-          )}
+          )} */}
 
           {isCurrentlyBlocked() && blockUntil && !mfaRequired && !emailNotVerified && (
             <div className="p-3 bg-red-100 text-red-700 rounded-lg border border-red-300 text-sm mb-4">
-              <p>🔒 Account temporarily locked for security.</p>
-              <p>Try again after: {formatBlockDateTime(blockUntil)}</p>
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="h-4 w-4" />
+                <p className="font-medium">Account Temporarily Locked</p>
+              </div>
+              <p>Too many failed login attempts. Please wait:</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="font-mono font-bold text-lg">{countdown}</span>
+                <span className="text-xs">(mm:ss)</span>
+              </div>
               {blockCount > 0 && (
-                <p className="text-xs mt-1">
+                <p className="text-xs mt-2">
                   Lock duration increases with repeated blocks for security.
+                  Current lock: {getBlockDurationDisplay(blockCount)}
                 </p>
               )}
             </div>
@@ -657,9 +702,11 @@ const Login = () => {
       </div>
 
       {/* Forgot Password Modal */}
-      {showForgotDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+       {showForgotDialog && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        {!resetSuccess ? (
+          <>
             <h3 className="text-xl font-bold text-[oklch(0.18_0.08_250)] mb-2">Reset Password</h3>
             <p className="text-sm text-[oklch(0.45_0_0)] mb-4">
               Enter your email address and we'll send you a link to reset your password.
@@ -683,11 +730,7 @@ const Login = () => {
             <div className="flex gap-3 mt-6">
               <button
                 type="button"
-                onClick={() => {
-                  setShowForgotDialog(false)
-                  setError("")
-                  setResetEmailValue("")
-                }}
+                onClick={handleCloseForgotDialog}
                 className="flex-1 px-4 py-2 border border-[oklch(0.88_0_0)] rounded-lg hover:bg-[oklch(0.96_0_0)] transition-colors font-medium"
               >
                 Cancel
@@ -701,11 +744,49 @@ const Login = () => {
                 {resetLoading ? "Sending..." : "Send Reset Link"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        ) : (
+          <>
+            {/* Success Message Design */}
+            <div className="text-center">
+              <div className="flex justify-center mb-4">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                  <CheckCircle2 className="h-8 w-8 text-green-600" />
+                </div>
+              </div>
+              
+              <h3 className="text-xl font-bold text-[oklch(0.18_0.08_250)] mb-2">
+                Check Your Email!
+              </h3>
+              
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                <p className="text-green-800 text-sm">
+                  We've sent a password reset link to:
+                </p>
+                <p className="text-green-900 font-medium mt-1">{resetEmailValue}</p>
+              </div>
+
+              <div className="text-xs text-[oklch(0.45_0_0)] space-y-1 mb-6">
+                <p>📧 Check your inbox (and spam folder)</p>
+                <p>⏱️ The link expires in 1 hour</p>
+                <p>🔒 Follow the instructions to set a new password</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseForgotDialog}
+                className="w-full px-4 py-3 bg-[oklch(0.68_0.19_35)] text-white rounded-lg hover:bg-[oklch(0.72_0.19_35)] transition-colors font-medium"
+              >
+                Return to Login
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
-  )
+  )}
+</div>
+)
 }
 
 export default Login

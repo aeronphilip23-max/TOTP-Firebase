@@ -76,13 +76,28 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
     return { isValid: true, error: "" }
   }
 
+  // Improved password generation function
   const generatePassword = () => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*"
+    const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    const lowercase = "abcdefghijklmnopqrstuvwxyz"
+    const numbers = "0123456789"
+    const specialChars = "!@#$%^&*"
+    
+    // Ensure at least one character from each category
     let password = ""
-    for (let i = 0; i < 12; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length))
+    password += uppercase.charAt(Math.floor(Math.random() * uppercase.length))
+    password += lowercase.charAt(Math.floor(Math.random() * lowercase.length))
+    password += numbers.charAt(Math.floor(Math.random() * numbers.length))
+    password += specialChars.charAt(Math.floor(Math.random() * specialChars.length))
+    
+    // Fill the rest with random characters from all categories
+    const allChars = uppercase + lowercase + numbers + specialChars
+    for (let i = password.length; i < 12; i++) {
+      password += allChars.charAt(Math.floor(Math.random() * allChars.length))
     }
-    return password
+    
+    // Shuffle the password to make it more random
+    return password.split('').sort(() => Math.random() - 0.5).join('')
   }
 
   // Password validation checks
@@ -95,7 +110,7 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
   }
 
   const isPasswordValid = Object.values(passwordChecks).every(Boolean)
-  const doPasswordsMatch = formData.password === formData.confirmPassword
+  const doPasswordsMatch = formData.password === formData.confirmPassword && formData.password.length > 0
   const nameValidation = validateName(formData.name)
   const canSubmit = nameValidation.isValid && formData.email && formData.password && isPasswordValid && doPasswordsMatch
 
@@ -298,6 +313,8 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
                   className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
                     formData.confirmPassword && !doPasswordsMatch
                       ? 'border-red-500 focus:ring-red-500'
+                      : formData.confirmPassword && doPasswordsMatch
+                      ? 'border-green-500 focus:ring-green-500'
                       : 'border-[oklch(0.88_0_0)] focus:ring-[oklch(0.68_0.19_35)]'
                   }`}
                 />
@@ -310,11 +327,20 @@ export default function CreateUserModal({ onClose, onCreateUser, roles }: Create
                 </button>
               </div>
 
-              {formData.confirmPassword && !doPasswordsMatch && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <XIcon className="h-4 w-4" />
-                  Passwords do not match
-                </p>
+              {formData.confirmPassword && (
+                <div>
+                  {!doPasswordsMatch ? (
+                    <p className="text-sm text-red-600 flex items-center gap-1">
+                      <XIcon className="h-4 w-4" />
+                      Passwords do not match
+                    </p>
+                  ) : (
+                    <p className="text-sm text-green-600 flex items-center gap-1">
+                      <Check className="h-4 w-4" />
+                      Passwords match
+                    </p>
+                  )}
+                </div>
               )}
 
               <button

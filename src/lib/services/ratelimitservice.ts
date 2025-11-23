@@ -142,11 +142,23 @@ export const reportSuspiciousBehavior = (ip: string, reason: string, severity: n
   console.log(`⚠️ Suspicious behavior from IP ${ip}: ${reason} (score: ${ipBehavior.score})`);
 };
 
-// Existing Rate Limit Functions
+// UPDATED: Progressive blocking with your specified logic
 const calculateBlockDuration = (blockCount: number): number => {
-  const baseBlockDuration = 15 * 60 * 1000; // 15 minutes
-  const progressiveBlockDuration = baseBlockDuration * Math.pow(2, blockCount);
-  return Math.min(progressiveBlockDuration, 24 * 60 * 60 * 1000); // Max 24 hours
+  // First block: 5 minutes
+  if (blockCount === 1) {
+    return 5 * 60 * 1000; // 5 minutes
+  }
+  // Second block: 10 minutes  
+  else if (blockCount === 2) {
+    return 10 * 60 * 1000; // 10 minutes
+  }
+  // Third and subsequent blocks: progressive increase up to 24 hours
+  else {
+    const baseMinutes = 15; // Start with 15 minutes for 3rd block
+    const progressiveMinutes = baseMinutes * Math.pow(2, blockCount - 3);
+    const maxMinutes = 24 * 60; // 24 hours in minutes
+    return Math.min(progressiveMinutes, maxMinutes) * 60 * 1000; // Convert to milliseconds
+  }
 };
 
 export const checkRateLimit = async (email: string): Promise<RateLimitStatus> => {
