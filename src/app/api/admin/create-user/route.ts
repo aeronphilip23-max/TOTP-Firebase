@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import admin from '@/src/lib/firebase-admin';
 import { getAuth } from 'firebase-admin/auth';
@@ -12,7 +11,6 @@ export async function POST(request: NextRequest) {
     console.log('Create User API called');
     console.log('Request data:', { name, email, role, requireEmailVerification });
 
-    
     if (!name || !email || !password) {
       return NextResponse.json(
         { error: 'Missing required fields' },
@@ -38,10 +36,16 @@ export async function POST(request: NextRequest) {
 
       console.log('User created with Client SDK:', firebaseUser.uid);
       
-      // Send email verification using Client SDK
+      // Send email verification using Client SDK with continue URL
       if (requireEmailVerification) {
         console.log('Sending verification email with Client SDK...');
-        await sendEmailVerification(firebaseUser);
+        
+        const actionCodeSettings = {
+          url: `${process.env.NEXTAUTH_URL || 'https://logitrack-wine.vercel.app/'}/landingpage`, // Your verification success page
+          handleCodeInApp: true
+        };
+
+        await sendEmailVerification(firebaseUser, actionCodeSettings);
         console.log('✅ Verification email sent via Client SDK');
       }
 
@@ -64,6 +68,23 @@ export async function POST(request: NextRequest) {
       });
       
       console.log('User created with Admin SDK:', userRecord.uid);
+
+      // If using Admin SDK and verification is required, generate verification link
+      if (requireEmailVerification) {
+        const actionCodeSettings = {
+          url: `${process.env.NEXTAUTH_URL || 'https://logitrack-wine.vercel.app/'}/landingpage`,
+          handleCodeInApp: true
+        };
+
+        const verificationLink = await getAuth().generateEmailVerificationLink(
+          email, 
+          actionCodeSettings
+        );
+        
+        // Here you would send the email using your own email service
+        // since Admin SDK doesn't send verification emails automatically
+        console.log('Verification link (send via your email service):', verificationLink);
+      }
     }
 
     // Create/update user document in Firestore

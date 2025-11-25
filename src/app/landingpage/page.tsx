@@ -2,10 +2,21 @@
 
 import { useRouter } from "next/navigation"
 import { Package, TrendingUp, Shield, Zap } from "lucide-react"
-
+import { useEffect } from "react"
 
 export default function LandingPage() {
   const navigate = useRouter()
+
+  useEffect(() => {
+    // Check if user is coming from email verification
+    const urlParams = new URLSearchParams(window.location.search)
+    const verified = urlParams.get('verified')
+    
+    if (verified === 'true') {
+      // Show verification success message or redirect to login
+      navigate.push('/auth/login?verified=true')
+    }
+  }, [navigate])
 
     return (
     <div className="min-h-screen bg-gradient-to-br from-[oklch(0.18_0.08_250)] via-[oklch(0.22_0.09_250)] to-[oklch(0.15_0.07_250)]">
