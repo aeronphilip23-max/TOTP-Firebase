@@ -259,12 +259,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Skip middleware entirely for public paths to prevent loops
+  // Skip Middleware entirely for public paths to prevent loops
   const publicPaths = [
     "/",
     "/landingpage", 
     "/auth/login",
-    "/auth/register",
     "/verifyotp",
     "/api/disable-mfa",
     "/_next",

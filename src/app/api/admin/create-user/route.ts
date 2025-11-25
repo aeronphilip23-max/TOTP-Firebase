@@ -80,9 +80,7 @@ export async function POST(request: NextRequest) {
           email, 
           actionCodeSettings
         );
-        
-        // Here you would send the email using your own email service
-        // since Admin SDK doesn't send verification emails automatically
+        // Admin 
         console.log('Verification link (send via your email service):', verificationLink);
       }
     }
